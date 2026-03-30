@@ -1,0 +1,27 @@
+```
+# Build artifacts
+bin/
+
+# Dependencies
+vendor/
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs
+*.log
+
+# Editors
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Go specific
+*.out
+*.test
+```
