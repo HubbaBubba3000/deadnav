@@ -3,11 +3,14 @@ package config
 import (
 	"github.com/joho/godotenv"
 	"os"
+	"strconv"
 )
 
 type Config struct {
 	Server   ServerConfig
 	Database DatabaseConfig
+	Auth     AuthConfig
+	Telegram TelegramConfig
 }
 
 type ServerConfig struct {
@@ -20,6 +23,15 @@ type DatabaseConfig struct {
 	User     string
 	Password string
 	DBName   string
+}
+
+type AuthConfig struct {
+	JWTSecret     string
+	JWTExpiration int // in hours
+}
+
+type TelegramConfig struct {
+	BotToken string
 }
 
 func Load() (*Config, error) {
@@ -36,6 +48,13 @@ func Load() (*Config, error) {
 			Password: getEnv("DB_PASSWORD", "password"),
 			DBName:   getEnv("DB_NAME", "task_scheduler"),
 		},
+		Auth: AuthConfig{
+			JWTSecret:     getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			JWTExpiration: getEnvAsInt("JWT_EXPIRATION_HOURS", 24),
+		},
+		Telegram: TelegramConfig{
+			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		},
 	}, nil
 }
 
@@ -44,4 +63,16 @@ func getEnv(key, defaultValue string) string {
 		return value
 	}
 	return defaultValue
+}
+
+func getEnvAsInt(key string, defaultValue int) int {
+	valueStr := getEnv(key, "")
+	if valueStr == "" {
+		return defaultValue
+	}
+	value, err := strconv.Atoi(valueStr)
+	if err != nil {
+		return defaultValue
+	}
+	return value
 }

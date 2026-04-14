@@ -26,9 +26,12 @@ CREATE TABLE IF NOT EXISTS users (
     username VARCHAR(100) NOT NULL UNIQUE,
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255),
+    telegram_id BIGINT UNIQUE,
+    auth_provider ENUM('local', 'telegram') DEFAULT 'local',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_username (username),
-    INDEX idx_email (email)
+    INDEX idx_email (email),
+    INDEX idx_telegram_id (telegram_id)
 );
 
 -- Schedules table
@@ -48,7 +51,7 @@ CREATE TABLE IF NOT EXISTS schedules (
 
 -- Statistics view (optional, for quick stats)
 CREATE OR REPLACE VIEW task_statistics AS
-SELECT 
+SELECT
     COUNT(*) as total_tasks,
     SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_tasks,
     SUM(CASE WHEN status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) as pending_tasks,

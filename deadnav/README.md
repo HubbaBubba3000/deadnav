@@ -63,14 +63,20 @@ go run cmd/api/main.go
 
 ## API Endpoints
 
-### Tasks
+### Authentication
+- `POST /api/v1/auth/register` - Регистрация пользователя (требует username, email, password)
+- `POST /api/v1/auth/login` - Вход по email/username и паролю
+- `POST /api/v1/auth/telegram` - Вход через Telegram (без пароля)
+- `GET /api/v1/auth/me` - Получить данные текущего пользователя (требует JWT токен)
+
+### Tasks (требует JWT аутентификацию)
 - `POST /api/v1/tasks` - Создать задачу
 - `GET /api/v1/tasks` - Получить все задачи
 - `GET /api/v1/tasks/:id` - Получить задачу по ID
 - `PUT /api/v1/tasks/:id` - Обновить задачу
 - `DELETE /api/v1/tasks/:id` - Удалить задачу
 
-### Statistics
+### Statistics (требует JWT аутентификацию)
 - `GET /api/v1/statistics` - Получить статистику
 
 ### Health Check
@@ -78,10 +84,52 @@ go run cmd/api/main.go
 
 ## Примеры запросов
 
+### Регистрация пользователя
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username": "john_doe",
+    "email": "john@example.com",
+    "password": "securepassword123"
+  }'
+```
+
+### Вход в систему
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{
+    "username_or_email": "john_doe",
+    "password": "securepassword123"
+  }'
+```
+
+### Вход через Telegram (без пароля)
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/telegram \
+  -H "Content-Type: application/json" \
+  -d '{
+    "telegram_id": 123456789,
+    "username": "john_doe",
+    "first_name": "John",
+    "last_name": "Doe",
+    "auth_date": 1234567890,
+    "hash": "telegram_auth_hash_here"
+  }'
+```
+
+### Использовать защищенный маршрут (с JWT токеном)
+```bash
+curl http://localhost:8080/api/v1/tasks \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
+```
+
 ### Создать задачу
 ```bash
 curl -X POST http://localhost:8080/api/v1/tasks \
   -H "Content-Type: application/json" \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE" \
   -d '{
     "title": "Новая задача",
     "description": "Описание задачи",
@@ -94,7 +142,8 @@ curl -X POST http://localhost:8080/api/v1/tasks \
 
 ### Получить статистику
 ```bash
-curl http://localhost:8080/api/v1/statistics
+curl http://localhost:8080/api/v1/statistics \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN_HERE"
 ```
 
 ## Добавление нового функционала

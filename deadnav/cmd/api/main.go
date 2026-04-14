@@ -37,10 +37,12 @@ func main() {
 	// Initialize services
 	taskService := services.NewTaskService(db)
 	statsService := services.NewStatisticsService(db)
+	userService := services.NewUserService(db, cfg)
 
 	// Initialize handlers
 	taskHandler := handlers.NewTaskHandler(taskService)
 	statsHandler := handlers.NewStatisticsHandler(statsService)
+	authHandler := handlers.NewAuthHandler(userService)
 
 	// Setup Gin router
 	r := gin.Default()
@@ -54,8 +56,18 @@ func main() {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Task routes
+	// Auth routes (public)
+	authGroup := r.Group("/api/v1/auth")
+	{
+		authGroup.POST("/register", authHandler.Register)
+		authGroup.POST("/login", authHandler.Login)
+		authGroup.POST("/telegram", authHandler.LoginWithTelegram)
+		authGroup.GET("/me", middleware.JWTAuth(userService), authHandler.GetMe)
+	}
+
+	// Task routes (protected)
 	taskGroup := r.Group("/api/v1/tasks")
+	taskGroup.Use(middleware.JWTAuth(userService))
 	{
 		taskGroup.POST("", taskHandler.CreateTask)
 		taskGroup.GET("", taskHandler.GetAllTasks)
@@ -64,8 +76,9 @@ func main() {
 		taskGroup.DELETE("/:id", taskHandler.DeleteTask)
 	}
 
-	// Statistics routes
+	// Statistics routes (protected)
 	statsGroup := r.Group("/api/v1/statistics")
+	statsGroup.Use(middleware.JWTAuth(userService))
 	{
 		statsGroup.GET("", statsHandler.GetStatistics)
 	}

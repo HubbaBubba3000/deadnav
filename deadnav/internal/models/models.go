@@ -15,10 +15,13 @@ type Task struct {
 }
 
 type User struct {
-	ID        int64     `json:"id"`
-	Username  string    `json:"username"`
-	Email     string    `json:"email"`
-	CreatedAt time.Time `json:"created_at"`
+	ID           int64      `json:"id"`
+	Username     string     `json:"username"`
+	Email        string     `json:"email"`
+	PasswordHash string     `json:"-"`
+	TelegramID   *int64     `json:"telegram_id,omitempty"`
+	AuthProvider string     `json:"auth_provider"` // "local" or "telegram"
+	CreatedAt    time.Time  `json:"created_at"`
 }
 
 type Schedule struct {
