@@ -2,6 +2,9 @@
 # Build artifacts
 bin/
 
+#qwen
+.qwen
+
 # Dependencies
 vendor/
 

@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+docker-compose*.yml
+.dockerignore
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build artifacts
+bin/
+vendor/
+main
+
+# Logs
+*.log
+logs/
+
+# Qwen
+.qwen/
+qwen-code-export-*.md
+
+# Tests
+*_test.go
+coverage.out

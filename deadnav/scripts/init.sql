@@ -1,8 +1,6 @@
--- Database initialization script for Task Scheduler
+-- Database initialization script for Deadnav
 
-CREATE DATABASE IF NOT EXISTS task_scheduler CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-USE task_scheduler;
+USE deadnav;
 
 -- Tasks table
 CREATE TABLE IF NOT EXISTS tasks (

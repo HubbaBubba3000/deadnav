@@ -26,7 +26,39 @@ deadnav/
 
 ## Быстрый старт
 
-### С помощью Docker Compose (рекомендуется)
+### Production (рекомендуется)
+
+1. Создайте файл окружения:
+```bash
+cp .env.example .env
+```
+
+2. Отредактируйте `.env` — обязательно замените все пароли и секреты:
+```bash
+# Минимально необходимые переменные:
+MYSQL_ROOT_PASSWORD=<strong-password>
+MYSQL_PASSWORD=<strong-password>
+JWT_SECRET=<random-string-at-least-32-chars>
+```
+
+3. Запуск:
+```bash
+docker compose -f docker-compose.prod.yml up -d
+```
+
+4. Просмотр логов:
+```bash
+docker compose -f docker-compose.prod.yml logs -f api
+```
+
+5. Остановка:
+```bash
+docker compose -f docker-compose.prod.yml down
+# С удалением данных (осторожно!):
+docker compose -f docker-compose.prod.yml down -v
+```
+
+### Разработка (docker-compose.yml)
 
 ```bash
 # Запуск всех сервисов
@@ -252,7 +284,7 @@ docker-compose up -d --scale api=3
 
 ## Технологии
 
-- **Go 1.21+** - язык программирования
+- **Go 1.25+** - язык программирования
 - **Gin** - HTTP фреймворк
 - **MySQL 8.0** - база данных
 - **Docker & Docker Compose** - контейнеризация
