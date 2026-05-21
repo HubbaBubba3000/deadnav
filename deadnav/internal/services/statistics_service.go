@@ -2,6 +2,7 @@ package services
 
 import (
 	"database/sql"
+	"fmt"
 	"math"
 	"sort"
 	"time"
@@ -9,15 +10,19 @@ import (
 	"deadnav/internal/models"
 )
 
+// StatisticsService computes analytical data for a user's tasks.
 type StatisticsService struct {
 	db *sql.DB
 }
 
+// NewStatisticsService creates a StatisticsService backed by the provided
+// database connection.
 func NewStatisticsService(db *sql.DB) *StatisticsService {
 	return &StatisticsService{db: db}
 }
 
-func (s *StatisticsService) GetStatistics() (*models.Statistics, error) {
+// GetStatistics returns a full statistics report scoped to userID.
+func (s *StatisticsService) GetStatistics(userID int64) (*models.Statistics, error) {
 	stats := &models.Statistics{
 		TasksByStatus:         make(map[string]int64),
 		TasksByPriority:       make(map[int]int64),
@@ -25,124 +30,129 @@ func (s *StatisticsService) GetStatistics() (*models.Statistics, error) {
 		AvgDurationByPriority: make(map[int]float64),
 	}
 
-	// === BASIC COUNTS ===
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks`).Scan(&stats.TotalTasks); err != nil {
-		return nil, err
+	if err := s.computeBasicCounts(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: basic counts: %w", err)
+	}
+	if err := s.computeDurationStats(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: duration stats: %w", err)
+	}
+	if err := s.computeTimeBasedStats(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: time-based stats: %w", err)
+	}
+	if err := s.computeTrendStats(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: trend stats: %w", err)
+	}
+	if err := s.computePriorityStats(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: priority stats: %w", err)
+	}
+	if err := s.computeWorkloadStats(stats, userID); err != nil {
+		return nil, fmt.Errorf("GetStatistics: workload stats: %w", err)
+	}
+	if err := s.computeUserStats(stats); err != nil {
+		return nil, fmt.Errorf("GetStatistics: user stats: %w", err)
 	}
 
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'completed'`).Scan(&stats.CompletedTasks); err != nil {
-		return nil, err
+	stats.ProductivityScore = calculateProductivityScore(stats)
+	return stats, nil
+}
+
+// ---------------------------------------------------------------------------
+// Private computation helpers
+// ---------------------------------------------------------------------------
+
+func (s *StatisticsService) computeBasicCounts(stats *models.Statistics, userID int64) error {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks WHERE user_id = ?`, userID,
+	).Scan(&stats.TotalTasks); err != nil {
+		return err
 	}
 
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'pending'`).Scan(&stats.PendingTasks); err != nil {
-		return nil, err
+	statusCounts := []struct {
+		field  *int64
+		status string
+	}{
+		{&stats.CompletedTasks, "completed"},
+		{&stats.PendingTasks, "pending"},
+		{&stats.InProgressTasks, "in_progress"},
+		{&stats.CancelledTasks, "cancelled"},
+	}
+	for _, sc := range statusCounts {
+		if err := s.db.QueryRow(
+			`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = ?`, userID, sc.status,
+		).Scan(sc.field); err != nil {
+			return err
+		}
 	}
 
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'in_progress'`).Scan(&stats.InProgressTasks); err != nil {
-		return nil, err
-	}
-
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM tasks WHERE status = 'cancelled'`).Scan(&stats.CancelledTasks); err != nil {
-		return nil, err
-	}
-
-	// === TASKS BY STATUS ===
-	rows, err := s.db.Query(`SELECT status, COUNT(*) FROM tasks GROUP BY status`)
+	// Tasks grouped by status
+	rows, err := s.db.Query(
+		`SELECT status, COUNT(*) FROM tasks WHERE user_id = ? GROUP BY status`, userID,
+	)
 	if err != nil {
-		return nil, err
+		return err
 	}
+	defer rows.Close()
 	for rows.Next() {
 		var status string
 		var count int64
 		if err := rows.Scan(&status, &count); err != nil {
-			return nil, err
+			return err
 		}
 		stats.TasksByStatus[status] = count
 	}
-	rows.Close()
-
-	// === TASKS BY PRIORITY ===
-	rows, err = s.db.Query(`SELECT priority, COUNT(*) FROM tasks GROUP BY priority`)
-	if err != nil {
-		return nil, err
+	if err := rows.Err(); err != nil {
+		return err
 	}
-	for rows.Next() {
+
+	// Tasks grouped by priority
+	rows2, err := s.db.Query(
+		`SELECT priority, COUNT(*) FROM tasks WHERE user_id = ? GROUP BY priority`, userID,
+	)
+	if err != nil {
+		return err
+	}
+	defer rows2.Close()
+	for rows2.Next() {
 		var priority int
 		var count int64
-		if err := rows.Scan(&priority, &count); err != nil {
-			return nil, err
+		if err := rows2.Scan(&priority, &count); err != nil {
+			return err
 		}
 		stats.TasksByPriority[priority] = count
 	}
-	rows.Close()
-
-	// === DURATION ANALYTICS ===
-	if err := s.computeDurationStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === TIME-BASED ANALYTICS ===
-	if err := s.computeTimeBasedStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === TREND ANALYTICS ===
-	if err := s.computeTrendStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === PRIORITY ANALYTICS ===
-	if err := s.computePriorityStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === WORKLOAD ANALYTICS ===
-	if err := s.computeWorkloadStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === USER ANALYTICS ===
-	if err := s.computeUserStats(stats); err != nil {
-		return nil, err
-	}
-
-	// === PRODUCTIVITY SCORE ===
-	stats.ProductivityScore = s.calculateProductivityScore(stats)
-
-	return stats, nil
+	return rows2.Err()
 }
 
-func (s *StatisticsService) computeDurationStats(stats *models.Statistics) error {
-	// Average duration for completed tasks
-	if err := s.db.QueryRow(`
-		SELECT COALESCE(AVG(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
-		FROM tasks WHERE status = 'completed'
-	`).Scan(&stats.AvgDuration); err != nil {
+func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userID int64) error {
+	// Average duration (completed tasks only).
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(AVG(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
+		 FROM tasks WHERE user_id = ? AND status = 'completed'`, userID,
+	).Scan(&stats.AvgDuration); err != nil {
 		return err
 	}
 
-	// Min duration
-	if err := s.db.QueryRow(`
-		SELECT COALESCE(MIN(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
-		FROM tasks WHERE status = 'completed' AND end_date > start_date
-	`).Scan(&stats.MinDuration); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(MIN(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
+		 FROM tasks WHERE user_id = ? AND status = 'completed' AND end_date > start_date`, userID,
+	).Scan(&stats.MinDuration); err != nil {
 		return err
 	}
 
-	// Max duration
-	if err := s.db.QueryRow(`
-		SELECT COALESCE(MAX(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
-		FROM tasks WHERE status = 'completed'
-	`).Scan(&stats.MaxDuration); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(MAX(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
+		 FROM tasks WHERE user_id = ? AND status = 'completed'`, userID,
+	).Scan(&stats.MaxDuration); err != nil {
 		return err
 	}
 
-	// Median duration
-	rows, err := s.db.Query(`
-		SELECT TIMESTAMPDIFF(HOUR, start_date, end_date) as duration
-		FROM tasks WHERE status = 'completed' AND end_date > start_date
-		ORDER BY duration
-	`)
+	// Median (requires fetching all durations into Go).
+	rows, err := s.db.Query(
+		`SELECT TIMESTAMPDIFF(HOUR, start_date, end_date)
+		 FROM tasks
+		 WHERE user_id = ? AND status = 'completed' AND end_date > start_date
+		 ORDER BY 1`, userID,
+	)
 	if err != nil {
 		return err
 	}
@@ -156,10 +166,12 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics) error
 		}
 		durations = append(durations, d)
 	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
-	if len(durations) > 0 {
+	if n := len(durations); n > 0 {
 		sort.Float64s(durations)
-		n := len(durations)
 		if n%2 == 0 {
 			stats.MedianDuration = (durations[n/2-1] + durations[n/2]) / 2
 		} else {
@@ -167,183 +179,174 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics) error
 		}
 	}
 
-	// Average duration by priority
-	rows, err = s.db.Query(`
-		SELECT priority, AVG(TIMESTAMPDIFF(HOUR, start_date, end_date))
-		FROM tasks WHERE status = 'completed' AND end_date > start_date
-		GROUP BY priority
-	`)
+	// Average duration by priority.
+	rows2, err := s.db.Query(
+		`SELECT priority, AVG(TIMESTAMPDIFF(HOUR, start_date, end_date))
+		 FROM tasks
+		 WHERE user_id = ? AND status = 'completed' AND end_date > start_date
+		 GROUP BY priority`, userID,
+	)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-
-	for rows.Next() {
+	defer rows2.Close()
+	for rows2.Next() {
 		var priority int
-		var avgDur float64
-		if err := rows.Scan(&priority, &avgDur); err != nil {
+		var avg float64
+		if err := rows2.Scan(&priority, &avg); err != nil {
 			return err
 		}
-		stats.AvgDurationByPriority[priority] = avgDur
+		stats.AvgDurationByPriority[priority] = avg
+	}
+	return rows2.Err()
+}
+
+func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, userID int64) error {
+	// Overdue: past deadline, not completed/cancelled.
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks
+		 WHERE user_id = ? AND end_date < NOW()
+		   AND status NOT IN ('completed','cancelled')`, userID,
+	).Scan(&stats.OverdueTasks); err != nil {
+		return err
 	}
 
+	// Upcoming deadlines (next 7 days).
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks
+		 WHERE user_id = ?
+		   AND end_date BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)
+		   AND status NOT IN ('completed','cancelled')`, userID,
+	).Scan(&stats.UpcomingDeadlines); err != nil {
+		return err
+	}
+
+	// Average delay for tasks that were completed after their deadline.
+	if err := s.db.QueryRow(
+		`SELECT COALESCE(AVG(TIMESTAMPDIFF(HOUR, end_date, updated_at)), 0)
+		 FROM tasks
+		 WHERE user_id = ? AND status = 'completed' AND updated_at > end_date`, userID,
+	).Scan(&stats.AvgDelayHours); err != nil {
+		return err
+	}
+
+	// On-time completion rate: completed on or before end_date.
+	// "On time" is approximated as updated_at <= end_date.
+	var onTime, total int64
+	if err := s.db.QueryRow(
+		`SELECT
+		     COALESCE(SUM(CASE WHEN updated_at <= end_date THEN 1 ELSE 0 END), 0),
+		     COUNT(*)
+		 FROM tasks WHERE user_id = ? AND status = 'completed'`, userID,
+	).Scan(&onTime, &total); err != nil {
+		return err
+	}
+	if total > 0 {
+		stats.OnTimeCompletionRate = math.Round(float64(onTime)/float64(total)*100*100) / 100
+	}
 	return nil
 }
 
-func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics) error {
-	// Overdue tasks (end_date < NOW() and not completed/cancelled)
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks
-		WHERE end_date < NOW() AND status NOT IN ('completed', 'cancelled')
-	`).Scan(&stats.OverdueTasks); err != nil {
-		return err
-	}
-
-	// Upcoming deadlines (within 7 days)
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks
-		WHERE end_date BETWEEN NOW() AND DATE_ADD(NOW(), INTERVAL 7 DAY)
-		AND status NOT IN ('completed', 'cancelled')
-	`).Scan(&stats.UpcomingDeadlines); err != nil {
-		return err
-	}
-
-	// Average delay for overdue completed tasks (how much they exceeded deadline)
-	if err := s.db.QueryRow(`
-		SELECT COALESCE(AVG(
-			CASE WHEN end_date < updated_at THEN TIMESTAMPDIFF(HOUR, end_date, updated_at) ELSE 0 END
-		), 0)
-		FROM tasks WHERE status = 'completed' AND updated_at > end_date
-	`).Scan(&stats.AvgDelayHours); err != nil {
-		return err
-	}
-
-	// On-time completion rate
-	var completedOnTime, totalCompleted int64
-	if err := s.db.QueryRow(`
-		SELECT
-			SUM(CASE WHEN end_date >= start_date THEN 1 ELSE 0 END),
-			COUNT(*)
-		FROM tasks WHERE status = 'completed'
-	`).Scan(&completedOnTime, &totalCompleted); err != nil {
-		return err
-	}
-	if totalCompleted > 0 {
-		stats.OnTimeCompletionRate = math.Round(float64(completedOnTime)/float64(totalCompleted)*100*100) / 100
-	}
-
-	return nil
-}
-
-func (s *StatisticsService) computeTrendStats(stats *models.Statistics) error {
+func (s *StatisticsService) computeTrendStats(stats *models.Statistics, userID int64) error {
 	now := time.Now()
-	startOfWeek := now.Truncate(24 * time.Hour).AddDate(0, 0, -int(now.Weekday()))
+	// Start of current week (Sunday = day 0).
+	startOfWeek := now.Truncate(24*time.Hour).AddDate(0, 0, -int(now.Weekday()))
 	startOfLastWeek := startOfWeek.AddDate(0, 0, -7)
 
-	// Tasks created this week
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE created_at >= ?
-	`, startOfWeek).Scan(&stats.TasksCreatedThisWeek); err != nil {
-		return err
+	queries := []struct {
+		dest  *int64
+		query string
+		args  []interface{}
+	}{
+		{&stats.TasksCreatedThisWeek,
+			`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND created_at >= ?`,
+			[]interface{}{userID, startOfWeek}},
+		{&stats.TasksCompletedThisWeek,
+			`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'completed' AND updated_at >= ?`,
+			[]interface{}{userID, startOfWeek}},
+		{&stats.TasksCreatedLastWeek,
+			`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND created_at >= ? AND created_at < ?`,
+			[]interface{}{userID, startOfLastWeek, startOfWeek}},
+		{&stats.TasksCompletedLastWeek,
+			`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND status = 'completed' AND updated_at >= ? AND updated_at < ?`,
+			[]interface{}{userID, startOfLastWeek, startOfWeek}},
+	}
+	for _, q := range queries {
+		if err := s.db.QueryRow(q.query, q.args...).Scan(q.dest); err != nil {
+			return err
+		}
 	}
 
-	// Tasks completed this week
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE status = 'completed' AND updated_at >= ?
-	`, startOfWeek).Scan(&stats.TasksCompletedThisWeek); err != nil {
-		return err
-	}
-
-	// Tasks created last week
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE created_at >= ? AND created_at < ?
-	`, startOfLastWeek, startOfWeek).Scan(&stats.TasksCreatedLastWeek); err != nil {
-		return err
-	}
-
-	// Tasks completed last week
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE status = 'completed' AND updated_at >= ? AND updated_at < ?
-	`, startOfLastWeek, startOfWeek).Scan(&stats.TasksCompletedLastWeek); err != nil {
-		return err
-	}
-
-	// Determine trend
-	if stats.TasksCompletedThisWeek > stats.TasksCompletedLastWeek {
+	switch {
+	case stats.TasksCompletedThisWeek > stats.TasksCompletedLastWeek:
 		stats.CompletionTrend = "improving"
-	} else if stats.TasksCompletedThisWeek < stats.TasksCompletedLastWeek {
+	case stats.TasksCompletedThisWeek < stats.TasksCompletedLastWeek:
 		stats.CompletionTrend = "declining"
-	} else {
+	default:
 		stats.CompletionTrend = "stable"
 	}
-
 	return nil
 }
 
-func (s *StatisticsService) computePriorityStats(stats *models.Statistics) error {
-	// High priority tasks (4-5)
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE priority >= 4
-	`).Scan(&stats.HighPriorityTasks); err != nil {
+func (s *StatisticsService) computePriorityStats(stats *models.Statistics, userID int64) error {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND priority >= 4`, userID,
+	).Scan(&stats.HighPriorityTasks); err != nil {
+		return err
+	}
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks WHERE user_id = ? AND priority <= 2`, userID,
+	).Scan(&stats.LowPriorityTasks); err != nil {
 		return err
 	}
 
-	// Low priority tasks (1-2)
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE priority <= 2
-	`).Scan(&stats.LowPriorityTasks); err != nil {
-		return err
-	}
-
-	// High priority completion rate
+	// High-priority completion rate.
 	var highTotal, highCompleted int64
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END)
-		FROM tasks WHERE priority >= 4
-	`).Scan(&highTotal, &highCompleted); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0)
+		 FROM tasks WHERE user_id = ? AND priority >= 4`, userID,
+	).Scan(&highTotal, &highCompleted); err != nil {
 		return err
 	}
 	if highTotal > 0 {
 		stats.HighPriorityCompletionRate = math.Round(float64(highCompleted)/float64(highTotal)*100*100) / 100
 	}
 
-	// Low priority completion rate
+	// Low-priority completion rate.
 	var lowTotal, lowCompleted int64
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*), SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END)
-		FROM tasks WHERE priority <= 2
-	`).Scan(&lowTotal, &lowCompleted); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*),
+		        COALESCE(SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END), 0)
+		 FROM tasks WHERE user_id = ? AND priority <= 2`, userID,
+	).Scan(&lowTotal, &lowCompleted); err != nil {
 		return err
 	}
 	if lowTotal > 0 {
 		stats.LowPriorityCompletionRate = math.Round(float64(lowCompleted)/float64(lowTotal)*100*100) / 100
 	}
-
 	return nil
 }
 
-func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics) error {
-	// Average tasks per day (last 30 days)
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-	`).Scan(&stats.TasksCreatedThisWeek); err != nil {
+func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics, userID int64) error {
+	// Average tasks per day over the last 30 days.
+	var last30Days int64
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM tasks
+		 WHERE user_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`, userID,
+	).Scan(&last30Days); err != nil {
 		return err
 	}
-	// Reuse the field name correctly - this should be tasks in last 30 days
-	var last30days int64
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM tasks WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-	`).Scan(&last30days); err != nil {
-		return err
-	}
-	stats.AvgTasksPerDay = math.Round(float64(last30days)/30*100) / 100
+	stats.AvgTasksPerDay = math.Round(float64(last30Days)/30*100) / 100
 
-	// Tasks by day of week
-	rows, err := s.db.Query(`
-		SELECT DAYNAME(created_at) as day_name, COUNT(*)
-		FROM tasks GROUP BY DAYOFWEEK(created_at), DAYNAME(created_at)
-		ORDER BY DAYOFWEEK(created_at)
-	`)
+	// Tasks by day of week.
+	rows, err := s.db.Query(
+		`SELECT DAYNAME(created_at) AS day_name, COUNT(*)
+		 FROM tasks
+		 WHERE user_id = ?
+		 GROUP BY DAYOFWEEK(created_at), DAYNAME(created_at)
+		 ORDER BY DAYOFWEEK(created_at)`, userID,
+	)
 	if err != nil {
 		return err
 	}
@@ -364,56 +367,46 @@ func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics) error
 		}
 	}
 	stats.PeakDay = peakDay
-
-	return nil
+	return rows.Err()
 }
 
 func (s *StatisticsService) computeUserStats(stats *models.Statistics) error {
-	// Total users
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&stats.TotalUsers); err != nil {
 		return err
 	}
-
-	// Active users (logged in or created/updated something in last 30 days)
-	// Since tasks aren't user-associated yet, we count users by recent activity
-	// For now, just count users created recently
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-	`).Scan(&stats.ActiveUsers); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)`,
+	).Scan(&stats.ActiveUsers); err != nil {
 		return err
 	}
-
-	// New users this month
-	if err := s.db.QueryRow(`
-		SELECT COUNT(*) FROM users WHERE created_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
-	`).Scan(&stats.NewUsersThisMonth); err != nil {
+	if err := s.db.QueryRow(
+		`SELECT COUNT(*) FROM users
+		 WHERE created_at >= DATE_FORMAT(NOW(), '%Y-%m-01')`,
+	).Scan(&stats.NewUsersThisMonth); err != nil {
 		return err
 	}
-
 	return nil
 }
 
-func (s *StatisticsService) calculateProductivityScore(stats *models.Statistics) float64 {
+// calculateProductivityScore returns a 0–100 composite productivity score.
+func calculateProductivityScore(stats *models.Statistics) float64 {
 	if stats.TotalTasks == 0 {
 		return 0
 	}
 
 	var score float64
 
-	// Completion rate (0-40 points)
-	completionRate := float64(stats.CompletedTasks) / float64(stats.TotalTasks)
-	score += completionRate * 40
+	// Completion rate → 0–40 pts
+	score += float64(stats.CompletedTasks) / float64(stats.TotalTasks) * 40
 
-	// On-time rate (0-25 points)
+	// On-time rate → 0–25 pts
 	score += (stats.OnTimeCompletionRate / 100) * 25
 
-	// No overdue penalty (0-15 points)
-	if stats.TotalTasks > 0 {
-		overdueRate := 1 - (float64(stats.OverdueTasks) / float64(stats.TotalTasks))
-		score += overdueRate * 15
-	}
+	// Low overdue rate → 0–15 pts
+	overdueRate := 1 - float64(stats.OverdueTasks)/float64(stats.TotalTasks)
+	score += overdueRate * 15
 
-	// Trend bonus (0-10 points)
+	// Trend bonus → 0–10 pts
 	switch stats.CompletionTrend {
 	case "improving":
 		score += 10
@@ -421,7 +414,7 @@ func (s *StatisticsService) calculateProductivityScore(stats *models.Statistics)
 		score += 5
 	}
 
-	// High priority completion (0-10 points)
+	// High-priority completion → 0–10 pts
 	if stats.HighPriorityTasks > 0 {
 		score += (stats.HighPriorityCompletionRate / 100) * 10
 	}

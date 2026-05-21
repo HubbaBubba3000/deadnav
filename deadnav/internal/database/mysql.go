@@ -3,6 +3,8 @@ package database
 import (
 	"database/sql"
 	"fmt"
+	"time"
+
 	"deadnav/internal/config"
 
 	_ "github.com/go-sql-driver/mysql"
@@ -28,6 +30,8 @@ func NewMySQLConnection(cfg config.DatabaseConfig) (*sql.DB, error) {
 
 	db.SetMaxOpenConns(25)
 	db.SetMaxIdleConns(5)
+	db.SetConnMaxLifetime(5 * time.Minute)
+	db.SetConnMaxIdleTime(2 * time.Minute)
 
 	return db, nil
 }

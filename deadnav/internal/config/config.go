@@ -1,9 +1,11 @@
 package config
 
 import (
-	"github.com/joho/godotenv"
+	"log"
 	"os"
 	"strconv"
+
+	"github.com/joho/godotenv"
 )
 
 type Config struct {
@@ -35,7 +37,14 @@ type TelegramConfig struct {
 }
 
 func Load() (*Config, error) {
-	_ = godotenv.Load()
+	// Try to load .env file, but don't fail if it doesn't exist
+	// (environment variables can be passed via docker-compose or system env)
+	if err := godotenv.Load(); err != nil {
+		// Only log if it's not a "file not found" error
+		if !os.IsNotExist(err) {
+			log.Printf("Warning loading .env: %v\n", err)
+		}
+	}
 
 	return &Config{
 		Server: ServerConfig{

@@ -1,0 +1,201 @@
+package handlers
+
+import (
+	"database/sql"
+	"errors"
+	"net/http"
+	"strconv"
+	"time"
+
+	"deadnav/internal/models"
+	"deadnav/internal/services"
+
+	"github.com/gin-gonic/gin"
+)
+
+// ScheduleHandler handles HTTP requests for calendar scheduling.
+type ScheduleHandler struct {
+	scheduleService *services.ScheduleService
+	taskService     *services.TaskService
+}
+
+// NewScheduleHandler creates a ScheduleHandler with the given services.
+func NewScheduleHandler(scheduleService *services.ScheduleService, taskService *services.TaskService) *ScheduleHandler {
+	return &ScheduleHandler{
+		scheduleService: scheduleService,
+		taskService:     taskService,
+	}
+}
+
+// GetSchedule godoc
+// @Summary Get user schedule
+// @Description Return all scheduled time blocks for the authenticated user, ordered by start time.
+// @Tags schedule
+// @Produce json
+// @Security BearerAuth
+// @Success 200 {array}  models.Schedule
+// @Failure 401 {object} errorResponse
+// @Router /api/v1/schedule [get]
+func (h *ScheduleHandler) GetSchedule(c *gin.Context) {
+	userID := mustUserID(c)
+
+	schedules, err := h.scheduleService.GetUserSchedule(userID)
+	if err != nil {
+		internalError(c, "GetSchedule: query", err)
+		return
+	}
+
+	if schedules == nil {
+		schedules = []models.Schedule{}
+	}
+	c.JSON(http.StatusOK, schedules)
+}
+
+// GetTaskSchedule godoc
+// @Summary Get schedule for a task
+// @Description Return the scheduled time block for a specific task.
+// @Tags schedule
+// @Produce json
+// @Security BearerAuth
+// @Param   id path int true "Task ID"
+// @Success 200 {object} models.Schedule
+// @Failure 400 {object} errorResponse
+// @Failure 404 {object} errorResponse
+// @Router /api/v1/schedule/task/{id} [get]
+func (h *ScheduleHandler) GetTaskSchedule(c *gin.Context) {
+	userID := mustUserID(c)
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	schedule, err := h.scheduleService.GetTaskSchedule(id, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, errorResponse{Error: "no schedule found for this task"})
+			return
+		}
+		internalError(c, "GetTaskSchedule: fetch", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, schedule)
+}
+
+// RescheduleTask godoc
+// @Summary Reschedule a task
+// @Description Re-run the auto-scheduler for a specific task, replacing any existing slot.
+// @Tags schedule
+// @Produce json
+// @Security BearerAuth
+// @Param   id path int true "Task ID"
+// @Success 200 {object} models.Schedule
+// @Failure 400 {object} errorResponse
+// @Failure 404 {object} errorResponse
+// @Router /api/v1/schedule/task/{id}/reschedule [post]
+func (h *ScheduleHandler) RescheduleTask(c *gin.Context) {
+	userID := mustUserID(c)
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	task, err := h.taskService.GetTaskByID(id, userID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			c.JSON(http.StatusNotFound, errorResponse{Error: "task not found"})
+			return
+		}
+		internalError(c, "RescheduleTask: fetch", err)
+		return
+	}
+
+	schedule, err := h.scheduleService.AutoScheduleTask(task, userID)
+	if err != nil {
+		c.JSON(http.StatusUnprocessableEntity, errorResponse{Error: err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, schedule)
+}
+
+// UnscheduleTask godoc
+// @Summary Remove a task from the schedule
+// @Description Delete the calendar entry for a specific task without deleting the task itself.
+// @Tags schedule
+// @Produce json
+// @Security BearerAuth
+// @Param   id path int true "Task ID"
+// @Success 200 {object} messageResponse
+// @Failure 400 {object} errorResponse
+// @Router /api/v1/schedule/task/{id} [delete]
+func (h *ScheduleHandler) UnscheduleTask(c *gin.Context) {
+	userID := mustUserID(c)
+	id, err := parseID(c)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: err.Error()})
+		return
+	}
+
+	if err := h.scheduleService.RemoveSchedule(id, userID); err != nil {
+		internalError(c, "UnscheduleTask: remove", err)
+		return
+	}
+
+	c.JSON(http.StatusOK, messageResponse{Message: "schedule entry removed"})
+}
+
+// GetFreeSlots godoc
+// @Summary Get free time slots
+// @Description Return all free working-hours slots of the requested duration
+// within the given time range.
+// @Tags schedule
+// @Produce json
+// @Security BearerAuth
+// @Param   from     query string true  "Start of range (RFC3339)"  example("2024-01-15T00:00:00Z")
+// @Param   to       query string true  "End of range (RFC3339)"    example("2024-01-22T00:00:00Z")
+// @Param   duration query int    false "Minimum slot duration in minutes (default 60)"
+// @Success 200 {array}  models.ScheduleSlot
+// @Failure 400 {object} errorResponse
+// @Router /api/v1/schedule/free-slots [get]
+func (h *ScheduleHandler) GetFreeSlots(c *gin.Context) {
+	userID := mustUserID(c)
+
+	fromStr := c.Query("from")
+	toStr := c.Query("to")
+	durationStr := c.DefaultQuery("duration", "60")
+
+	if fromStr == "" || toStr == "" {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "query params 'from' and 'to' are required (RFC3339 format)"})
+		return
+	}
+
+	from, err := time.Parse(time.RFC3339, fromStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid 'from' date: " + err.Error()})
+		return
+	}
+	to, err := time.Parse(time.RFC3339, toStr)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid 'to' date: " + err.Error()})
+		return
+	}
+	duration, err := strconv.Atoi(durationStr)
+	if err != nil || duration < 1 {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "'duration' must be a positive integer (minutes)"})
+		return
+	}
+
+	slots, err := h.scheduleService.GetFreeSlots(userID, from, to, duration)
+	if err != nil {
+		internalError(c, "GetFreeSlots: search", err)
+		return
+	}
+
+	if slots == nil {
+		slots = []models.ScheduleSlot{}
+	}
+	c.JSON(http.StatusOK, slots)
+}

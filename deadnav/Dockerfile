@@ -3,7 +3,7 @@
 # ==========================================
 
 # --- Build stage ---
-ARG GO_VERSION=1.25
+ARG GO_VERSION=1.23
 FROM golang:${GO_VERSION}-alpine AS builder
 
 WORKDIR /app
@@ -11,17 +11,17 @@ WORKDIR /app
 # Install build dependencies
 RUN apk add --no-cache git ca-certificates
 
-# Download dependencies (layer cached)
+# Cache dependency downloads (layer is reused when go.mod/go.sum are unchanged)
 COPY go.mod go.sum ./
 RUN go mod download
 
-# Copy source code
+# Copy the rest of the source code
 COPY . .
 
-# Build with optimizations
+# Build a static binary
 RUN CGO_ENABLED=0 GOOS=linux \
     go build \
-    -ldflags="-w -s -X main.version=$(git describe --tags --always --dirty 2>/dev/null || echo dev)" \
+    -ldflags="-w -s" \
     -trimpath \
     -o /app/main ./cmd/api
 
@@ -29,7 +29,7 @@ RUN CGO_ENABLED=0 GOOS=linux \
 FROM alpine:3.19 AS production
 
 # Install runtime dependencies
-RUN apk --no-cache add ca-certificates tzdata
+RUN apk --no-cache add ca-certificates tzdata curl
 
 # Create non-root user
 RUN addgroup -g 1001 -S appgroup && \
@@ -48,7 +48,7 @@ USER appuser
 
 # Health check
 HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=3 \
-    CMD wget --no-verbose --tries=1 --spider http://localhost:8080/health || exit 1
+    CMD curl -f http://localhost:8080/health || exit 1
 
 EXPOSE 8080
 

@@ -1,52 +1,55 @@
-version: '3.8'
+version: "3.8"
 
 services:
   mysql:
     image: mysql:8.0
-    container_name: task_scheduler_db
-    restart: unless-stopped
+    restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: password
-      MYSQL_DATABASE: task_scheduler
-      MYSQL_USER: scheduler
-      MYSQL_PASSWORD: scheduler_password
-    ports:
-      - "3306:3306"
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-deadnav}
+      MYSQL_USER: ${MYSQL_USER:-deadnav_user}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-deadnav_password}
     volumes:
       - mysql_data:/var/lib/mysql
-      - ./scripts/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql
     networks:
-      - task_scheduler_network
+      - deadnav_internal
+    ports:
+      - "3306:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s
       timeout: 5s
-      retries: 5
+      retries: 10
+      start_period: 30s
 
-  api:
+  app:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: task_scheduler_api
-    restart: unless-stopped
-    environment:
-      SERVER_PORT: 8080
-      DB_HOST: mysql
-      DB_PORT: 3306
-      DB_USER: scheduler
-      DB_PASSWORD: scheduler_password
-      DB_NAME: task_scheduler
-    ports:
-      - "8080:8080"
+      args:
+        GO_VERSION: "1.23"
+    restart: always
     depends_on:
       mysql:
         condition: service_healthy
+    environment:
+      - DB_HOST=mysql
+      - DB_PORT=3306
+      - DB_USER=${MYSQL_USER:-deadnav_user}
+      - DB_PASSWORD=${MYSQL_PASSWORD:-deadnav_password}
+      - DB_NAME=${MYSQL_DATABASE:-deadnav}
+      - SERVER_PORT=8080
+      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
+    ports:
+      - "8080:8080"
     networks:
-      - task_scheduler_network
+      - deadnav_internal
 
 networks:
-  task_scheduler_network:
+  deadnav_internal:
     driver: bridge
+    name: deadnav_network
 
 volumes:
   mysql_data:

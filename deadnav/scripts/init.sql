@@ -1,65 +1,73 @@
--- Database initialization script for Deadnav
+-- Deadnav database initialisation
+-- Runs as root during container init.
 
+-- Create database first
+CREATE DATABASE IF NOT EXISTS deadnav;
 USE deadnav;
 
--- Tasks table
-CREATE TABLE IF NOT EXISTS tasks (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    title VARCHAR(255) NOT NULL,
-    description TEXT,
-    status ENUM('pending', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
-    priority INT DEFAULT 1 CHECK (priority >= 1 AND priority <= 5),
-    start_date DATETIME NOT NULL,
-    end_date DATETIME NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_status (status),
-    INDEX idx_priority (priority),
-    INDEX idx_dates (start_date, end_date)
-);
+-- Create deadnav_user (requires database to exist for grants)
+CREATE USER IF NOT EXISTS 'deadnav_user'@'%' IDENTIFIED BY 'deadnav_password';
+GRANT ALL PRIVILEGES ON deadnav.* TO 'deadnav_user'@'%';
+FLUSH PRIVILEGES;
 
--- Users table
 CREATE TABLE IF NOT EXISTS users (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    username VARCHAR(100) NOT NULL UNIQUE,
-    email VARCHAR(255) NOT NULL UNIQUE,
-    password_hash VARCHAR(255),
-    telegram_id BIGINT UNIQUE,
-    auth_provider ENUM('local', 'telegram') DEFAULT 'local',
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_username (username),
-    INDEX idx_email (email),
-    INDEX idx_telegram_id (telegram_id)
-);
+    id            BIGINT AUTO_INCREMENT PRIMARY KEY,
+    username      VARCHAR(255)  NOT NULL,
+    email         VARCHAR(255)  NOT NULL DEFAULT '',
+    password_hash VARCHAR(255)  NOT NULL DEFAULT '',
+    telegram_id   BIGINT        NULL     UNIQUE,
+    auth_provider VARCHAR(50)   NOT NULL DEFAULT 'local' COMMENT 'local | telegram',
+    created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- Schedules table
+    UNIQUE KEY uk_username (username),
+    UNIQUE KEY uk_email    (email)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS tasks (
+    id               BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id          BIGINT       NOT NULL,
+    title            VARCHAR(255) NOT NULL,
+    description      TEXT         NULL,
+    status           VARCHAR(50)  NOT NULL DEFAULT 'pending'
+                     COMMENT 'pending | in_progress | completed | cancelled',
+    priority         INT          NOT NULL DEFAULT 3  COMMENT '1(low) – 5(high)',
+    duration_minutes INT          NOT NULL DEFAULT 0  COMMENT '0 = auto-calculated',
+    start_date       DATETIME     NOT NULL COMMENT 'earliest start / window open',
+    end_date         DATETIME     NOT NULL COMMENT 'deadline',
+    complexity       INT          NOT NULL DEFAULT 3  COMMENT '1–5',
+    urgency          INT          NOT NULL DEFAULT 3  COMMENT '1–5',
+    importance       INT          NOT NULL DEFAULT 3  COMMENT '1–5',
+    estimated_time   INT          NOT NULL DEFAULT 0  COMMENT 'minutes',
+    created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    INDEX idx_user_status (user_id, status),
+    INDEX idx_user_dates  (user_id, start_date, end_date),
+
+    CONSTRAINT fk_tasks_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 CREATE TABLE IF NOT EXISTS schedules (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    task_id BIGINT NOT NULL,
-    user_id BIGINT NOT NULL,
-    start_time DATETIME NOT NULL,
-    end_time DATETIME NOT NULL,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
-    FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE,
-    INDEX idx_task_id (task_id),
-    INDEX idx_user_id (user_id),
-    INDEX idx_time_range (start_time, end_time)
-);
+    id          BIGINT AUTO_INCREMENT PRIMARY KEY,
+    task_id     BIGINT   NOT NULL UNIQUE,
+    user_id     BIGINT   NOT NULL,
+    start_time  DATETIME NOT NULL,
+    end_time    DATETIME NOT NULL,
+    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
--- Statistics view (optional, for quick stats)
-CREATE OR REPLACE VIEW task_statistics AS
-SELECT
-    COUNT(*) as total_tasks,
-    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed_tasks,
-    SUM(CASE WHEN status IN ('pending', 'in_progress') THEN 1 ELSE 0 END) as pending_tasks,
-    AVG(CASE WHEN status = 'completed' THEN TIMESTAMPDIFF(HOUR, start_date, end_date) ELSE NULL END) as avg_duration_hours
-FROM tasks;
+    INDEX idx_sched_user_timerange (user_id, start_time, end_time),
 
--- Insert sample data (optional)
-INSERT INTO tasks (title, description, status, priority, start_date, end_date) VALUES
-('Project Planning', 'Initial project planning and requirements gathering', 'completed', 1, NOW() - INTERVAL 10 DAY, NOW() - INTERVAL 7 DAY),
-('Database Design', 'Design database schema and relationships', 'completed', 2, NOW() - INTERVAL 7 DAY, NOW() - INTERVAL 5 DAY),
-('API Development', 'Develop REST API endpoints', 'in_progress', 1, NOW() - INTERVAL 5 DAY, NOW() + INTERVAL 5 DAY),
-('Frontend Development', 'Build user interface components', 'pending', 2, NOW() + INTERVAL 2 DAY, NOW() + INTERVAL 15 DAY),
-('Testing', 'Perform unit and integration testing', 'pending', 3, NOW() + INTERVAL 10 DAY, NOW() + INTERVAL 20 DAY);
+    CONSTRAINT fk_schedules_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
+    CONSTRAINT fk_schedules_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_preferences (
+    user_id          BIGINT       PRIMARY KEY,
+    work_start_hour  INT          NOT NULL DEFAULT 9,
+    work_end_hour    INT          NOT NULL DEFAULT 18,
+    work_days        VARCHAR(100) NOT NULL DEFAULT 'Mon,Tue,Wed,Thu,Fri',
+    min_slot_minutes INT          NOT NULL DEFAULT 30,
+    timezone         VARCHAR(50)  NOT NULL DEFAULT 'UTC',
+
+    CONSTRAINT fk_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

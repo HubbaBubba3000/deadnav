@@ -1,8 +1,16 @@
 package main
 
 import (
+	"context"
+	"database/sql"
 	"fmt"
 	"log"
+	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
+
 	"deadnav/internal/config"
 	"deadnav/internal/database"
 	"deadnav/internal/handlers"
@@ -14,81 +22,133 @@ import (
 )
 
 func main() {
-	// Initialize logger
+	// ── Logger ────────────────────────────────────────────────────────────────
 	if err := logger.Init(); err != nil {
-		log.Fatalf("Failed to initialize logger: %v", err)
+		log.Fatalf("failed to initialise logger: %v", err)
 	}
+	log := logger.GetLogger()
+	defer log.Sync()
 
-	// Load configuration
+	// ── Configuration ─────────────────────────────────────────────────────────
 	cfg, err := config.Load()
 	if err != nil {
-		log.Fatalf("Failed to load configuration: %v", err)
+		log.Fatal(fmt.Sprintf("failed to load configuration: %v", err))
 	}
 
-	// Initialize database connection
-	db, err := database.NewMySQLConnection(cfg.Database)
+	// ── Database (retry until MySQL is ready) ─────────────────────────────────
+	var db *sql.DB
+	for attempt := 1; attempt <= 10; attempt++ {
+		db, err = database.NewMySQLConnection(cfg.Database)
+		if err == nil {
+			break
+		}
+		log.Warn(fmt.Sprintf("database not ready (attempt %d/30): %v", attempt, err))
+		time.Sleep(2 * time.Second)
+	}
 	if err != nil {
-		log.Fatalf("Failed to connect to database: %v", err)
+		log.Fatal(fmt.Sprintf("failed to connect to database after 30 attempts: %v", err))
 	}
 	defer db.Close()
+	log.Info("database connection established")
 
-	logger.GetLogger().Info("Database connection established")
-
-	// Initialize services
-	taskService := services.NewTaskService(db)
-	statsService := services.NewStatisticsService(db)
+	// ── Services ──────────────────────────────────────────────────────────────
 	userService := services.NewUserService(db, cfg)
+	taskService := services.NewTaskService(db)
+	scheduleService := services.NewScheduleService(db)
+	statsService := services.NewStatisticsService(db)
+	preferencesService := services.NewPreferencesService(db)
 
-	// Initialize handlers
-	taskHandler := handlers.NewTaskHandler(taskService)
-	statsHandler := handlers.NewStatisticsHandler(statsService)
+	// ── Handlers ──────────────────────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(userService)
+	taskHandler := handlers.NewTaskHandler(taskService, scheduleService)
+	scheduleHandler := handlers.NewScheduleHandler(scheduleService, taskService)
+	statsHandler := handlers.NewStatisticsHandler(statsService)
+	preferencesHandler := handlers.NewPreferencesHandler(preferencesService)
 
-	// Setup Gin router
-	r := gin.Default()
-
-	// Apply middleware
-	r.Use(middleware.CORS())
-	r.Use(middleware.Logger())
+	// ── Router ────────────────────────────────────────────────────────────────
+	r := gin.New()
 	r.Use(middleware.Recovery())
+	r.Use(middleware.Logger())
+	r.Use(middleware.CORS())
 
-	// Health check endpoint
+	// Health check (no auth)
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Auth routes (public)
-	authGroup := r.Group("/api/v1/auth")
+	// ── Auth routes (public) ──────────────────────────────────────────────────
+	auth := r.Group("/api/v1/auth")
 	{
-		authGroup.POST("/register", authHandler.Register)
-		authGroup.POST("/login", authHandler.Login)
-		authGroup.POST("/telegram", authHandler.LoginWithTelegram)
-		authGroup.GET("/me", middleware.JWTAuth(userService), authHandler.GetMe)
+		auth.POST("/register", authHandler.Register)
+		auth.POST("/login", authHandler.Login)
+		auth.POST("/telegram", authHandler.LoginWithTelegram)
+		auth.GET("/me", middleware.JWTAuth(userService), authHandler.GetMe)
 	}
 
-	// Task routes (protected)
-	taskGroup := r.Group("/api/v1/tasks")
-	taskGroup.Use(middleware.JWTAuth(userService))
+	// ── Protected routes ──────────────────────────────────────────────────────
+	protected := r.Group("/api/v1")
+	protected.Use(middleware.JWTAuth(userService))
 	{
-		taskGroup.POST("", taskHandler.CreateTask)
-		taskGroup.GET("", taskHandler.GetAllTasks)
-		taskGroup.GET("/:id", taskHandler.GetTask)
-		taskGroup.PUT("/:id", taskHandler.UpdateTask)
-		taskGroup.DELETE("/:id", taskHandler.DeleteTask)
+		// Tasks
+		tasks := protected.Group("/tasks")
+		{
+			tasks.POST("", taskHandler.CreateTask)
+			tasks.GET("", taskHandler.GetAllTasks)
+			tasks.GET("/:id", taskHandler.GetTask)
+			tasks.PUT("/:id", taskHandler.UpdateTask)
+			tasks.DELETE("/:id", taskHandler.DeleteTask)
+		}
+
+		// Calendar / schedule
+		schedule := protected.Group("/schedule")
+		{
+			schedule.GET("", scheduleHandler.GetSchedule)
+			schedule.GET("/free-slots", scheduleHandler.GetFreeSlots)
+			schedule.GET("/task/:id", scheduleHandler.GetTaskSchedule)
+			schedule.POST("/task/:id/reschedule", scheduleHandler.RescheduleTask)
+			schedule.DELETE("/task/:id", scheduleHandler.UnscheduleTask)
+		}
+
+		// Statistics
+		protected.GET("/statistics", statsHandler.GetStatistics)
+
+		// User preferences
+		prefs := protected.Group("/preferences")
+		{
+			prefs.GET("", preferencesHandler.GetPreferences)
+			prefs.PUT("", preferencesHandler.UpdatePreferences)
+		}
 	}
 
-	// Statistics routes (protected)
-	statsGroup := r.Group("/api/v1/statistics")
-	statsGroup.Use(middleware.JWTAuth(userService))
-	{
-		statsGroup.GET("", statsHandler.GetStatistics)
-	}
-
-	// Start server
+	// ── Graceful server ──────────────────────────────────────────────────────
 	addr := fmt.Sprintf(":%s", cfg.Server.Port)
-	logger.GetLogger().Info(fmt.Sprintf("Starting server on %s", addr))
-
-	if err := r.Run(addr); err != nil {
-		log.Fatalf("Failed to start server: %v", err)
+	srv := &http.Server{
+		Addr:    addr,
+		Handler: r,
 	}
+
+	// Start server in a goroutine.
+	go func() {
+		log.Info(fmt.Sprintf("starting server on %s", addr))
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal(fmt.Sprintf("server error: %v", err))
+		}
+	}()
+
+	// Wait for interrupt signal.
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+
+	log.Info("shutting down server...")
+
+	// Give outstanding requests 10 seconds to complete.
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if err := srv.Shutdown(ctx); err != nil {
+		log.Fatal(fmt.Sprintf("server forced to shutdown: %v", err))
+	}
+
+	log.Info("server exited gracefully")
 }

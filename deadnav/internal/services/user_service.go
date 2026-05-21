@@ -3,6 +3,8 @@ package services
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"deadnav/internal/config"
@@ -45,8 +47,8 @@ type TelegramAuthRequest struct {
 }
 
 type AuthResponse struct {
-	Token string          `json:"token"`
-	User  models.User     `json:"user"`
+	Token string      `json:"token"`
+	User  models.User `json:"user"`
 }
 
 // Register creates a new user with password authentication
@@ -124,7 +126,7 @@ func (s *UserService) Login(req LoginRequest) (*AuthResponse, error) {
 	var passwordHash sql.NullString
 
 	err := s.DB.QueryRow(
-		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, created_at 
+		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, created_at
 		 FROM users WHERE username = ? OR email = ?`,
 		req.UsernameOrEmail, req.UsernameOrEmail,
 	).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.AuthProvider, &user.CreatedAt)
@@ -172,11 +174,11 @@ func (s *UserService) LoginWithTelegram(req TelegramAuthRequest) (*AuthResponse,
 	var telegramID sql.NullInt64
 
 	err := s.DB.QueryRow(
-		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, created_at 
+		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, telegram_id, created_at
 		 FROM users WHERE telegram_id = ?`,
 		req.TelegramID,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.AuthProvider, &user.CreatedAt)
-	
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.AuthProvider, &telegramID, &user.CreatedAt)
+
 	if err == sql.ErrNoRows {
 		// User doesn't exist, create new user
 		now := time.Now()
@@ -188,7 +190,7 @@ func (s *UserService) LoginWithTelegram(req TelegramAuthRequest) (*AuthResponse,
 			// Check if username conflict
 			if isDuplicateEntry(err) {
 				// Try with telegram_id as username suffix
-				uniqueUsername := req.Username + "_" + string(rune(req.TelegramID%10000))
+				uniqueUsername := fmt.Sprintf("%s_%d", req.Username, req.TelegramID%10000)
 				result, err = s.DB.Exec(
 					"INSERT INTO users (telegram_id, username, email, auth_provider, created_at) VALUES (?, ?, ?, 'telegram', ?)",
 					req.TelegramID, uniqueUsername, "", now,
@@ -242,11 +244,11 @@ func (s *UserService) GetUserByID(userID int64) (*models.User, error) {
 	var telegramID sql.NullInt64
 
 	err := s.DB.QueryRow(
-		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, created_at 
+		`SELECT id, username, email, COALESCE(password_hash, ''), auth_provider, telegram_id, created_at
 		 FROM users WHERE id = ?`,
 		userID,
-	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.AuthProvider, &user.CreatedAt)
-	
+	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.AuthProvider, &telegramID, &user.CreatedAt)
+
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return nil, errors.New("user not found")
@@ -269,15 +271,15 @@ func (s *UserService) generateToken(user models.User) (string, error) {
 	}
 
 	claims := jwt.MapClaims{
-		"user_id": user.ID,
-		"username": user.Username,
+		"user_id":       user.ID,
+		"username":      user.Username,
 		"auth_provider": user.AuthProvider,
-		"exp": time.Now().Add(time.Duration(expirationHours) * time.Hour).Unix(),
-		"iat": time.Now().Unix(),
+		"exp":           time.Now().Add(time.Duration(expirationHours) * time.Hour).Unix(),
+		"iat":           time.Now().Unix(),
 	}
 
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	
+
 	return token.SignedString([]byte(s.Config.Auth.JWTSecret))
 }
 
@@ -311,9 +313,11 @@ func (s *UserService) ValidateToken(tokenString string) (int64, error) {
 	return int64(userID), nil
 }
 
-// isDuplicateEntry checks if the error is a MySQL duplicate entry error
+// isDuplicateEntry reports whether err is a MySQL duplicate-entry error (1062).
 func isDuplicateEntry(err error) bool {
-	return err != nil && (err.Error() != "" && 
-		(err.Error()[:25] == "Error 1062: Duplicate entry" || 
-		 err.Error()[:25] == "Error 1062, Duplicate entry"))
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "1062") && strings.Contains(msg, "Duplicate entry")
 }

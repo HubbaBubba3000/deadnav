@@ -1,8 +1,9 @@
 package handlers
 
 import (
-	"net/http"
 	"deadnav/internal/services"
+	"net/http"
+
 	"github.com/gin-gonic/gin"
 )
 
@@ -111,7 +112,7 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 
 	user, err := h.UserService.GetUserByID(userID.(int64))
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		internalError(c, "GetMe: fetch", err)
 		return
 	}
 
