@@ -131,7 +131,7 @@ func (s *UserService) Login(req LoginRequest) (*AuthResponse, error) {
 		req.UsernameOrEmail, req.UsernameOrEmail,
 	).Scan(&user.ID, &user.Username, &user.Email, &passwordHash, &user.AuthProvider, &user.CreatedAt)
 	if err != nil {
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			return nil, errors.New("invalid credentials")
 		}
 		return nil, err
@@ -250,8 +250,8 @@ func (s *UserService) GetUserByID(userID int64) (*models.User, error) {
 	).Scan(&user.ID, &user.Username, &user.Email, &user.PasswordHash, &user.AuthProvider, &telegramID, &user.CreatedAt)
 
 	if err != nil {
-		if err == sql.ErrNoRows {
-			return nil, errors.New("user not found")
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, fmt.Errorf("GetUserByID: user %d not found: %w", userID, sql.ErrNoRows)
 		}
 		return nil, err
 	}

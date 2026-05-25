@@ -5,15 +5,17 @@ services:
     image: mysql:8.0
     restart: always
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-rootpassword}
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       MYSQL_DATABASE: ${MYSQL_DATABASE:-deadnav}
       MYSQL_USER: ${MYSQL_USER:-deadnav_user}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD:-deadnav_password}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - mysql_data:/var/lib/mysql
       - ./scripts/init.sql:/docker-entrypoint-initdb.d/01-init.sql
     networks:
       - deadnav_internal
+    # SEC-6: MySQL should not be exposed publicly. Remove ports section or bind to localhost only.
+    # For local development, you can uncomment:
     ports:
       - "3306:3306"
     healthcheck:
@@ -22,6 +24,31 @@ services:
       timeout: 5s
       retries: 10
       start_period: 30s
+
+  phpmyadmin:
+    image: phpmyadmin/phpmyadmin:latest
+    restart: always
+    depends_on:
+      - mysql
+    environment:
+      PMA_HOST: mysql
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+    ports:
+      - "8081:80"
+    networks:
+      - deadnav_internal
+
+  nginx:
+    image: nginx:alpine
+    restart: always
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "80:80"
+    depends_on:
+      - app
+    networks:
+      - deadnav_internal
 
   app:
     build:
@@ -33,16 +60,23 @@ services:
     depends_on:
       mysql:
         condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://app:8080/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     environment:
       - DB_HOST=mysql
       - DB_PORT=3306
       - DB_USER=${MYSQL_USER:-deadnav_user}
-      - DB_PASSWORD=${MYSQL_PASSWORD:-deadnav_password}
+      - DB_PASSWORD=${MYSQL_PASSWORD}
       - DB_NAME=${MYSQL_DATABASE:-deadnav}
       - SERVER_PORT=8080
-      - JWT_SECRET=${JWT_SECRET:-change-me-in-production}
-    ports:
-      - "8080:8080"
+      - JWT_SECRET=${JWT_SECRET}
+      - ALLOWED_ORIGINS=*
+    expose:
+      - "8080"
     networks:
       - deadnav_internal
 

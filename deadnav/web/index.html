@@ -1,558 +1,806 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Deadnav API Testing Interface</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
-            padding: 20px;
-            background-color: #f5f5f5;
-        }
-        .container {
-            background-color: white;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        h1 {
-            color: #2c3e50;
-            text-align: center;
-        }
-        .endpoint {
-            margin: 20px 0;
-            padding: 15px;
-            border: 1px solid #ddd;
-            border-radius: 5px;
-            background-color: #fafafa;
-        }
-        .endpoint h2 {
-            margin-top: 0;
-            color: #34495e;
-        }
-        .form-group {
-            margin: 10px 0;
-        }
-        label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-        }
-        input, textarea, select {
-            width: 100%;
-            padding: 8px;
-            border: 1px solid #ddd;
-            border-radius: 4px;
-            box-sizing: border-box;
-        }
-        button {
-            background-color: #3498db;
-            color: white;
-            padding: 10px 15px;
-            border: none;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 16px;
-        }
-        button:hover {
-            background-color: #2980b9;
-        }
-        .response {
-            margin-top: 10px;
-            padding: 10px;
-            border-radius: 4px;
-            white-space: pre-wrap;
-            font-family: monospace;
-        }
-        .success {
-            background-color: #d4edda;
-            color: #155724;
-            border: 1px solid #c3e6cb;
-        }
-        .error {
-            background-color: #f8d7da;
-            color: #721c24;
-            border: 1px solid #f5c6cb;
-        }
-        .hidden {
-            display: none;
-        }
-        .tabs {
-            display: flex;
-            margin-bottom: 20px;
-        }
-        .tab {
-            padding: 10px 20px;
-            background-color: #e0e0e0;
-            cursor: pointer;
-            border-right: 1px solid #ccc;
-        }
-        .tab.active {
-            background-color: #3498db;
-            color: white;
-        }
-        .tab-content {
-            display: none;
-        }
-        .tab-content.active {
-            display: block;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Deadnav API Testing Interface</h1>
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Deadnav API Testing Interface</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                max-width: 1200px;
+                margin: 0 auto;
+                padding: 20px;
+                background-color: #f5f5f5;
+            }
+            .container {
+                background-color: white;
+                padding: 20px;
+                border-radius: 8px;
+                box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            }
+            h1 {
+                color: #2c3e50;
+                text-align: center;
+            }
+            .endpoint {
+                margin: 20px 0;
+                padding: 15px;
+                border: 1px solid #ddd;
+                border-radius: 5px;
+                background-color: #fafafa;
+            }
+            .endpoint h2 {
+                margin-top: 0;
+                color: #34495e;
+            }
+            .form-group {
+                margin: 10px 0;
+            }
+            label {
+                display: block;
+                margin-bottom: 5px;
+                font-weight: bold;
+            }
+            input,
+            textarea,
+            select {
+                width: 100%;
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                box-sizing: border-box;
+            }
+            button {
+                background-color: #3498db;
+                color: white;
+                padding: 10px 15px;
+                border: none;
+                border-radius: 4px;
+                cursor: pointer;
+                font-size: 16px;
+            }
+            button:hover {
+                background-color: #2980b9;
+            }
+            .response {
+                margin-top: 10px;
+                padding: 10px;
+                border-radius: 4px;
+                white-space: pre-wrap;
+                font-family: monospace;
+            }
+            .success {
+                background-color: #d4edda;
+                color: #155724;
+                border: 1px solid #c3e6cb;
+            }
+            .error {
+                background-color: #f8d7da;
+                color: #721c24;
+                border: 1px solid #f5c6cb;
+            }
+            .hidden {
+                display: none;
+            }
+            .tabs {
+                display: flex;
+                margin-bottom: 20px;
+            }
+            .tab {
+                padding: 10px 20px;
+                background-color: #e0e0e0;
+                cursor: pointer;
+                border-right: 1px solid #ccc;
+            }
+            .tab.active {
+                background-color: #3498db;
+                color: white;
+            }
+            .tab-content {
+                display: none;
+            }
+            .tab-content.active {
+                display: block;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Deadnav API Testing Interface</h1>
 
-        <div class="tabs">
-            <div class="tab active" onclick="switchTab('auth')">Authentication</div>
-            <div class="tab" onclick="switchTab('tasks')">Tasks</div>
-            <div class="tab" onclick="switchTab('schedule')">Schedule</div>
-            <div class="tab" onclick="switchTab('stats')">Statistics</div>
+            <div class="tabs">
+                <div class="tab active" onclick="switchTab('auth')">
+                    Authentication
+                </div>
+                <div class="tab" onclick="switchTab('tasks')">Tasks</div>
+                <div class="tab" onclick="switchTab('schedule')">Schedule</div>
+                <div class="tab" onclick="switchTab('stats')">Statistics</div>
+            </div>
+
+            <!-- Authentication Tab -->
+            <div id="auth-tab" class="tab-content active">
+                <div class="endpoint">
+                    <h2>Register User</h2>
+                    <div class="form-group">
+                        <label>Username:</label>
+                        <input type="text" id="reg-username" value="testuser" />
+                    </div>
+                    <div class="form-group">
+                        <label>Email:</label>
+                        <input
+                            type="email"
+                            id="reg-email"
+                            value="test@example.com"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Password:</label>
+                        <input
+                            type="password"
+                            id="reg-password"
+                            value="password123"
+                        />
+                    </div>
+                    <button onclick="registerUser()">Register</button>
+                    <div id="reg-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Login User</h2>
+                    <div class="form-group">
+                        <label>Username:</label>
+                        <input
+                            type="text"
+                            id="login-username"
+                            value="testuser"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Password:</label>
+                        <input
+                            type="password"
+                            id="login-password"
+                            value="password123"
+                        />
+                    </div>
+                    <button onclick="loginUser()">Login</button>
+                    <div id="login-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Get Current User</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="user-token"
+                            placeholder="JWT token from login response"
+                        />
+                    </div>
+                    <button onclick="getCurrentUser()">Get User Info</button>
+                    <div id="user-response" class="response hidden"></div>
+                </div>
+            </div>
+
+            <!-- Tasks Tab -->
+            <div id="tasks-tab" class="tab-content">
+                <div class="endpoint">
+                    <h2>Create Task</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="task-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Title:</label>
+                        <input type="text" id="task-title" value="Test Task" />
+                    </div>
+                    <div class="form-group">
+                        <label>Description:</label>
+                        <textarea id="task-description">
+Test task description</textarea
+                        >
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date (YYYY-MM-DDTHH:MM:SSZ):</label>
+                        <input
+                            type="text"
+                            id="task-start-date"
+                            value="2024-01-15T09:00:00Z"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>End Date (YYYY-MM-DDTHH:MM:SSZ):</label>
+                        <input
+                            type="text"
+                            id="task-end-date"
+                            value="2024-01-15T12:00:00Z"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Complexity (1-5):</label>
+                        <input
+                            type="number"
+                            id="task-complexity"
+                            value="3"
+                            min="1"
+                            max="5"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Urgency (1-5):</label>
+                        <input
+                            type="number"
+                            id="task-urgency"
+                            value="2"
+                            min="1"
+                            max="5"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Importance (1-5):</label>
+                        <input
+                            type="number"
+                            id="task-importance"
+                            value="4"
+                            min="1"
+                            max="5"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Priority (1-5):</label>
+                        <input
+                            type="number"
+                            id="task-priority"
+                            value="3"
+                            min="1"
+                            max="5"
+                        />
+                    </div>
+                    <button onclick="createTask()">Create Task</button>
+                    <div id="task-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Get All Tasks</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="tasks-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <button onclick="getAllTasks()">Get All Tasks</button>
+                    <div id="tasks-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Get Task by ID</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="task-get-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Task ID:</label>
+                        <input type="number" id="task-get-id" value="1" />
+                    </div>
+                    <button onclick="getTaskById()">Get Task</button>
+                    <div id="task-get-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Update Task</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="task-update-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Task ID:</label>
+                        <input type="number" id="task-update-id" value="1" />
+                    </div>
+                    <div class="form-group">
+                        <label>Title:</label>
+                        <input
+                            type="text"
+                            id="task-update-title"
+                            value="Updated Task"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Description:</label>
+                        <textarea id="task-update-description">
+Updated task description</textarea
+                        >
+                    </div>
+                    <button onclick="updateTask()">Update Task</button>
+                    <div
+                        id="task-update-response"
+                        class="response hidden"
+                    ></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Delete Task</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="task-delete-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Task ID:</label>
+                        <input type="number" id="task-delete-id" value="1" />
+                    </div>
+                    <button onclick="deleteTask()">Delete Task</button>
+                    <div
+                        id="task-delete-response"
+                        class="response hidden"
+                    ></div>
+                </div>
+            </div>
+
+            <!-- Schedule Tab -->
+            <div id="schedule-tab" class="tab-content">
+                <div class="endpoint">
+                    <h2>Get User Schedule</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="schedule-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <button onclick="getUserSchedule()">Get Schedule</button>
+                    <div id="schedule-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Get Free Slots</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="slots-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Start Date (YYYY-MM-DDTHH:MM:SSZ):</label>
+                        <input
+                            type="text"
+                            id="slots-start"
+                            value="2024-01-15T00:00:00Z"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>End Date (YYYY-MM-DDTHH:MM:SSZ):</label>
+                        <input
+                            type="text"
+                            id="slots-end"
+                            value="2024-01-22T00:00:00Z"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Duration (minutes):</label>
+                        <input type="number" id="slots-duration" value="60" />
+                    </div>
+                    <button onclick="getFreeSlots()">Get Free Slots</button>
+                    <div id="slots-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Reschedule Task</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="reschedule-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Task ID:</label>
+                        <input type="number" id="reschedule-id" value="1" />
+                    </div>
+                    <button onclick="rescheduleTask()">Reschedule Task</button>
+                    <div id="reschedule-response" class="response hidden"></div>
+                </div>
+
+                <div class="endpoint">
+                    <h2>Unschedule Task</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="unschedule-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <div class="form-group">
+                        <label>Task ID:</label>
+                        <input type="number" id="unschedule-id" value="1" />
+                    </div>
+                    <button onclick="unscheduleTask()">Unschedule Task</button>
+                    <div id="unschedule-response" class="response hidden"></div>
+                </div>
+            </div>
+
+            <!-- Statistics Tab -->
+            <div id="stats-tab" class="tab-content">
+                <div class="endpoint">
+                    <h2>Get Statistics</h2>
+                    <div class="form-group">
+                        <label>Authorization Token:</label>
+                        <input
+                            type="text"
+                            id="stats-token"
+                            placeholder="JWT token"
+                        />
+                    </div>
+                    <button onclick="getStatistics()">Get Statistics</button>
+                    <div id="stats-response" class="response hidden"></div>
+                </div>
+            </div>
         </div>
 
-        <!-- Authentication Tab -->
-        <div id="auth-tab" class="tab-content active">
-            <div class="endpoint">
-                <h2>Register User</h2>
-                <div class="form-group">
-                    <label>Username:</label>
-                    <input type="text" id="reg-username" value="testuser">
-                </div>
-                <div class="form-group">
-                    <label>Email:</label>
-                    <input type="email" id="reg-email" value="test@example.com">
-                </div>
-                <div class="form-group">
-                    <label>Password:</label>
-                    <input type="password" id="reg-password" value="password123">
-                </div>
-                <button onclick="registerUser()">Register</button>
-                <div id="reg-response" class="response hidden"></div>
-            </div>
+        <script>
+            const API_BASE = "http://localhost:80/api/v1";
 
-            <div class="endpoint">
-                <h2>Login User</h2>
-                <div class="form-group">
-                    <label>Username:</label>
-                    <input type="text" id="login-username" value="testuser">
-                </div>
-                <div class="form-group">
-                    <label>Password:</label>
-                    <input type="password" id="login-password" value="password123">
-                </div>
-                <button onclick="loginUser()">Login</button>
-                <div id="login-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Get Current User</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="user-token" placeholder="JWT token from login response">
-                </div>
-                <button onclick="getCurrentUser()">Get User Info</button>
-                <div id="user-response" class="response hidden"></div>
-            </div>
-        </div>
-
-        <!-- Tasks Tab -->
-        <div id="tasks-tab" class="tab-content">
-            <div class="endpoint">
-                <h2>Create Task</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="task-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Title:</label>
-                    <input type="text" id="task-title" value="Test Task">
-                </div>
-                <div class="form-group">
-                    <label>Description:</label>
-                    <textarea id="task-description">Test task description</textarea>
-                </div>
-                <div class="form-group">
-                    <label>Start Date (YYYY-MM-DDTHH:MM:SSZ):</label>
-                    <input type="text" id="task-start-date" value="2024-01-15T09:00:00Z">
-                </div>
-                <div class="form-group">
-                    <label>End Date (YYYY-MM-DDTHH:MM:SSZ):</label>
-                    <input type="text" id="task-end-date" value="2024-01-15T12:00:00Z">
-                </div>
-                <div class="form-group">
-                    <label>Complexity (1-5):</label>
-                    <input type="number" id="task-complexity" value="3" min="1" max="5">
-                </div>
-                <div class="form-group">
-                    <label>Urgency (1-5):</label>
-                    <input type="number" id="task-urgency" value="2" min="1" max="5">
-                </div>
-                <div class="form-group">
-                    <label>Importance (1-5):</label>
-                    <input type="number" id="task-importance" value="4" min="1" max="5">
-                </div>
-                <div class="form-group">
-                    <label>Priority (1-5):</label>
-                    <input type="number" id="task-priority" value="3" min="1" max="5">
-                </div>
-                <button onclick="createTask()">Create Task</button>
-                <div id="task-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Get All Tasks</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="tasks-token" placeholder="JWT token">
-                </div>
-                <button onclick="getAllTasks()">Get All Tasks</button>
-                <div id="tasks-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Get Task by ID</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="task-get-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Task ID:</label>
-                    <input type="number" id="task-get-id" value="1">
-                </div>
-                <button onclick="getTaskById()">Get Task</button>
-                <div id="task-get-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Update Task</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="task-update-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Task ID:</label>
-                    <input type="number" id="task-update-id" value="1">
-                </div>
-                <div class="form-group">
-                    <label>Title:</label>
-                    <input type="text" id="task-update-title" value="Updated Task">
-                </div>
-                <div class="form-group">
-                    <label>Description:</label>
-                    <textarea id="task-update-description">Updated task description</textarea>
-                </div>
-                <button onclick="updateTask()">Update Task</button>
-                <div id="task-update-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Delete Task</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="task-delete-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Task ID:</label>
-                    <input type="number" id="task-delete-id" value="1">
-                </div>
-                <button onclick="deleteTask()">Delete Task</button>
-                <div id="task-delete-response" class="response hidden"></div>
-            </div>
-        </div>
-
-        <!-- Schedule Tab -->
-        <div id="schedule-tab" class="tab-content">
-            <div class="endpoint">
-                <h2>Get User Schedule</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="schedule-token" placeholder="JWT token">
-                </div>
-                <button onclick="getUserSchedule()">Get Schedule</button>
-                <div id="schedule-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Get Free Slots</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="slots-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Start Date (YYYY-MM-DDTHH:MM:SSZ):</label>
-                    <input type="text" id="slots-start" value="2024-01-15T00:00:00Z">
-                </div>
-                <div class="form-group">
-                    <label>End Date (YYYY-MM-DDTHH:MM:SSZ):</label>
-                    <input type="text" id="slots-end" value="2024-01-22T00:00:00Z">
-                </div>
-                <div class="form-group">
-                    <label>Duration (minutes):</label>
-                    <input type="number" id="slots-duration" value="60">
-                </div>
-                <button onclick="getFreeSlots()">Get Free Slots</button>
-                <div id="slots-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Reschedule Task</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="reschedule-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Task ID:</label>
-                    <input type="number" id="reschedule-id" value="1">
-                </div>
-                <button onclick="rescheduleTask()">Reschedule Task</button>
-                <div id="reschedule-response" class="response hidden"></div>
-            </div>
-
-            <div class="endpoint">
-                <h2>Unschedule Task</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="unschedule-token" placeholder="JWT token">
-                </div>
-                <div class="form-group">
-                    <label>Task ID:</label>
-                    <input type="number" id="unschedule-id" value="1">
-                </div>
-                <button onclick="unscheduleTask()">Unschedule Task</button>
-                <div id="unschedule-response" class="response hidden"></div>
-            </div>
-        </div>
-
-        <!-- Statistics Tab -->
-        <div id="stats-tab" class="tab-content">
-            <div class="endpoint">
-                <h2>Get Statistics</h2>
-                <div class="form-group">
-                    <label>Authorization Token:</label>
-                    <input type="text" id="stats-token" placeholder="JWT token">
-                </div>
-                <button onclick="getStatistics()">Get Statistics</button>
-                <div id="stats-response" class="response hidden"></div>
-            </div>
-        </div>
-    </div>
-
-    <script>
-        const API_BASE = 'http://localhost:8080/api/v1';
-
-        // Tab switching
-        function switchTab(tabName) {
-            // Hide all tab contents
-            document.querySelectorAll('.tab-content').forEach(el => {
-                el.classList.remove('active');
-            });
-            // Remove active class from all tabs
-            document.querySelectorAll('.tab').forEach(el => {
-                el.classList.remove('active');
-            });
-            // Show selected tab
-            document.getElementById(tabName + '-tab').classList.add('active');
-            document.querySelector(`.tab[onclick="switchTab('${tabName}')"]`).classList.add('active');
-        }
-
-        // Helper function to show response
-        function showResponse(elementId, response, isSuccess) {
-            const element = document.getElementById(elementId);
-            element.textContent = JSON.stringify(response, null, 2);
-            element.className = 'response ' + (isSuccess ? 'success' : 'error');
-            element.classList.remove('hidden');
-        }
-
-        // Helper function to hide response
-        function hideResponse(elementId) {
-            document.getElementById(elementId).classList.add('hidden');
-        }
-
-        // Helper function to make API requests
-        function makeRequest(url, method, token, data = null) {
-            const headers = {
-                'Content-Type': 'application/json'
-            };
-
-            if (token) {
-                headers['Authorization'] = `Bearer ${token}`;
+            // Tab switching
+            function switchTab(tabName) {
+                // Hide all tab contents
+                document.querySelectorAll(".tab-content").forEach((el) => {
+                    el.classList.remove("active");
+                });
+                // Remove active class from all tabs
+                document.querySelectorAll(".tab").forEach((el) => {
+                    el.classList.remove("active");
+                });
+                // Show selected tab
+                document
+                    .getElementById(tabName + "-tab")
+                    .classList.add("active");
+                document
+                    .querySelector(`.tab[onclick="switchTab('${tabName}')"]`)
+                    .classList.add("active");
             }
 
-            const options = {
-                method: method,
-                headers: headers
-            };
-
-            if (data && (method === 'POST' || method === 'PUT')) {
-                options.body = JSON.stringify(data);
+            // Helper function to show response
+            function showResponse(elementId, response, isSuccess) {
+                const element = document.getElementById(elementId);
+                element.textContent = JSON.stringify(response, null, 2);
+                element.className =
+                    "response " + (isSuccess ? "success" : "error");
+                element.classList.remove("hidden");
             }
 
-            return fetch(url, options)
-                .then(response => {
+            // Helper function to hide response
+            function hideResponse(elementId) {
+                document.getElementById(elementId).classList.add("hidden");
+            }
+
+            // Helper function to make API requests
+            function makeRequest(url, method, token, data = null) {
+                const headers = {
+                    "Content-Type": "application/json",
+                };
+
+                if (token) {
+                    headers["Authorization"] = `Bearer ${token}`;
+                }
+
+                const options = {
+                    method: method,
+                    headers: headers,
+                };
+
+                if (data && (method === "POST" || method === "PUT")) {
+                    options.body = JSON.stringify(data);
+                }
+
+                return fetch(url, options).then((response) => {
                     if (response.status === 204) {
-                        return { success: true, message: 'Success (no content)' };
+                        return {
+                            success: true,
+                            message: "Success (no content)",
+                        };
                     }
                     return response.json();
                 });
-        }
+            }
 
-        // Authentication endpoints
-        function registerUser() {
-            const username = document.getElementById('reg-username').value;
-            const email = document.getElementById('reg-email').value;
-            const password = document.getElementById('reg-password').value;
+            // Authentication endpoints
+            function registerUser() {
+                const username = document.getElementById("reg-username").value;
+                const email = document.getElementById("reg-email").value;
+                const password = document.getElementById("reg-password").value;
 
-            makeRequest(`${API_BASE}/auth/register`, 'POST', null, {
-                username: username,
-                email: email,
-                password: password
-            })
-            .then(data => showResponse('reg-response', data, true))
-            .catch(error => showResponse('reg-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/auth/register`, "POST", null, {
+                    username: username,
+                    email: email,
+                    password: password,
+                })
+                    .then((data) => showResponse("reg-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "reg-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function loginUser() {
-            const username = document.getElementById('login-username').value;
-            const password = document.getElementById('login-password').value;
+            function loginUser() {
+                const username =
+                    document.getElementById("login-username").value;
+                const password =
+                    document.getElementById("login-password").value;
 
-            makeRequest(`${API_BASE}/auth/login`, 'POST', null, {
-                username: username,
-                password: password
-            })
-            .then(data => {
-                showResponse('login-response', data, true);
-                if (data && data.token) {
-                    // Auto-fill token for subsequent calls
-                    document.getElementById('user-token').value = data.token;
-                    document.getElementById('task-token').value = data.token;
-                    document.getElementById('tasks-token').value = data.token;
-                    document.getElementById('schedule-token').value = data.token;
-                    document.getElementById('slots-token').value = data.token;
-                    document.getElementById('reschedule-token').value = data.token;
-                    document.getElementById('unschedule-token').value = data.token;
-                    document.getElementById('stats-token').value = data.token;
-                }
-            })
-            .catch(error => showResponse('login-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/auth/login`, "POST", null, {
+                    username: username,
+                    password: password,
+                })
+                    .then((data) => {
+                        showResponse("login-response", data, true);
+                        if (data && data.token) {
+                            // Auto-fill token for subsequent calls
+                            document.getElementById("user-token").value =
+                                data.token;
+                            document.getElementById("task-token").value =
+                                data.token;
+                            document.getElementById("tasks-token").value =
+                                data.token;
+                            document.getElementById("schedule-token").value =
+                                data.token;
+                            document.getElementById("slots-token").value =
+                                data.token;
+                            document.getElementById("reschedule-token").value =
+                                data.token;
+                            document.getElementById("unschedule-token").value =
+                                data.token;
+                            document.getElementById("stats-token").value =
+                                data.token;
+                        }
+                    })
+                    .catch((error) =>
+                        showResponse(
+                            "login-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function getCurrentUser() {
-            const token = document.getElementById('user-token').value;
+            function getCurrentUser() {
+                const token = document.getElementById("user-token").value;
 
-            makeRequest(`${API_BASE}/auth/me`, 'GET', token)
-            .then(data => showResponse('user-response', data, true))
-            .catch(error => showResponse('user-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/auth/me`, "GET", token)
+                    .then((data) => showResponse("user-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "user-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        // Task endpoints
-        function createTask() {
-            const token = document.getElementById('task-token').value;
-            const task = {
-                title: document.getElementById('task-title').value,
-                description: document.getElementById('task-description').value,
-                start_date: document.getElementById('task-start-date').value,
-                end_date: document.getElementById('task-end-date').value,
-                complexity: parseInt(document.getElementById('task-complexity').value),
-                urgency: parseInt(document.getElementById('task-urgency').value),
-                importance: parseInt(document.getElementById('task-importance').value),
-                priority: parseInt(document.getElementById('task-priority').value)
-            };
+            // Task endpoints
+            function createTask() {
+                const token = document.getElementById("task-token").value;
+                const task = {
+                    title: document.getElementById("task-title").value,
+                    description:
+                        document.getElementById("task-description").value,
+                    start_date:
+                        document.getElementById("task-start-date").value,
+                    end_date: document.getElementById("task-end-date").value,
+                    complexity: parseInt(
+                        document.getElementById("task-complexity").value,
+                    ),
+                    urgency: parseInt(
+                        document.getElementById("task-urgency").value,
+                    ),
+                    importance: parseInt(
+                        document.getElementById("task-importance").value,
+                    ),
+                    priority: parseInt(
+                        document.getElementById("task-priority").value,
+                    ),
+                };
 
-            makeRequest(`${API_BASE}/tasks`, 'POST', token, task)
-            .then(data => showResponse('task-response', data, true))
-            .catch(error => showResponse('task-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/tasks`, "POST", token, task)
+                    .then((data) => showResponse("task-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "task-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function getAllTasks() {
-            const token = document.getElementById('tasks-token').value;
+            function getAllTasks() {
+                const token = document.getElementById("tasks-token").value;
 
-            makeRequest(`${API_BASE}/tasks`, 'GET', token)
-            .then(data => showResponse('tasks-response', data, true))
-            .catch(error => showResponse('tasks-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/tasks`, "GET", token)
+                    .then((data) => showResponse("tasks-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "tasks-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function getTaskById() {
-            const token = document.getElementById('task-get-token').value;
-            const taskId = document.getElementById('task-get-id').value;
+            function getTaskById() {
+                const token = document.getElementById("task-get-token").value;
+                const taskId = document.getElementById("task-get-id").value;
 
-            makeRequest(`${API_BASE}/tasks/${taskId}`, 'GET', token)
-            .then(data => showResponse('task-get-response', data, true))
-            .catch(error => showResponse('task-get-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/tasks/${taskId}`, "GET", token)
+                    .then((data) =>
+                        showResponse("task-get-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "task-get-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function updateTask() {
-            const token = document.getElementById('task-update-token').value;
-            const taskId = document.getElementById('task-update-id').value;
-            const task = {
-                title: document.getElementById('task-update-title').value,
-                description: document.getElementById('task-update-description').value
-            };
+            function updateTask() {
+                const token =
+                    document.getElementById("task-update-token").value;
+                const taskId = document.getElementById("task-update-id").value;
+                const task = {
+                    title: document.getElementById("task-update-title").value,
+                    description: document.getElementById(
+                        "task-update-description",
+                    ).value,
+                };
 
-            makeRequest(`${API_BASE}/tasks/${taskId}`, 'PUT', token, task)
-            .then(data => showResponse('task-update-response', data, true))
-            .catch(error => showResponse('task-update-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/tasks/${taskId}`, "PUT", token, task)
+                    .then((data) =>
+                        showResponse("task-update-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "task-update-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function deleteTask() {
-            const token = document.getElementById('task-delete-token').value;
-            const taskId = document.getElementById('task-delete-id').value;
+            function deleteTask() {
+                const token =
+                    document.getElementById("task-delete-token").value;
+                const taskId = document.getElementById("task-delete-id").value;
 
-            makeRequest(`${API_BASE}/tasks/${taskId}`, 'DELETE', token)
-            .then(data => showResponse('task-delete-response', data, true))
-            .catch(error => showResponse('task-delete-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/tasks/${taskId}`, "DELETE", token)
+                    .then((data) =>
+                        showResponse("task-delete-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "task-delete-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        // Schedule endpoints
-        function getUserSchedule() {
-            const token = document.getElementById('schedule-token').value;
+            // Schedule endpoints
+            function getUserSchedule() {
+                const token = document.getElementById("schedule-token").value;
 
-            makeRequest(`${API_BASE}/schedule`, 'GET', token)
-            .then(data => showResponse('schedule-response', data, true))
-            .catch(error => showResponse('schedule-response', { error: error.message }, false));
-        }
+                makeRequest(`${API_BASE}/schedule`, "GET", token)
+                    .then((data) =>
+                        showResponse("schedule-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "schedule-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function getFreeSlots() {
-            const token = document.getElementById('slots-token').value;
-            const start = document.getElementById('slots-start').value;
-            const end = document.getElementById('slots-end').value;
-            const duration = document.getElementById('slots-duration').value;
+            function getFreeSlots() {
+                const token = document.getElementById("slots-token").value;
+                const start = document.getElementById("slots-start").value;
+                const end = document.getElementById("slots-end").value;
+                const duration =
+                    document.getElementById("slots-duration").value;
 
-            const url = `${API_BASE}/schedule/free-slots?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}&duration=${duration}`;
+                const url = `${API_BASE}/schedule/free-slots?from=${encodeURIComponent(start)}&to=${encodeURIComponent(end)}&duration=${duration}`;
 
-            makeRequest(url, 'GET', token)
-            .then(data => showResponse('slots-response', data, true))
-            .catch(error => showResponse('slots-response', { error: error.message }, false));
-        }
+                makeRequest(url, "GET", token)
+                    .then((data) => showResponse("slots-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "slots-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function rescheduleTask() {
-            const token = document.getElementById('reschedule-token').value;
-            const taskId = document.getElementById('reschedule-id').value;
+            function rescheduleTask() {
+                const token = document.getElementById("reschedule-token").value;
+                const taskId = document.getElementById("reschedule-id").value;
 
-            makeRequest(`${API_BASE}/schedule/task/${taskId}/reschedule`, 'POST', token)
-            .then(data => showResponse('reschedule-response', data, true))
-            .catch(error => showResponse('reschedule-response', { error: error.message }, false));
-        }
+                makeRequest(
+                    `${API_BASE}/schedule/task/${taskId}/reschedule`,
+                    "POST",
+                    token,
+                )
+                    .then((data) =>
+                        showResponse("reschedule-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "reschedule-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        function unscheduleTask() {
-            const token = document.getElementById('unschedule-token').value;
-            const taskId = document.getElementById('unschedule-id').value;
+            function unscheduleTask() {
+                const token = document.getElementById("unschedule-token").value;
+                const taskId = document.getElementById("unschedule-id").value;
 
-            makeRequest(`${API_BASE}/schedule/task/${taskId}`, 'DELETE', token)
-            .then(data => showResponse('unschedule-response', data, true))
-            .catch(error => showResponse('unschedule-response', { error: error.message }, false));
-        }
+                makeRequest(
+                    `${API_BASE}/schedule/task/${taskId}`,
+                    "DELETE",
+                    token,
+                )
+                    .then((data) =>
+                        showResponse("unschedule-response", data, true),
+                    )
+                    .catch((error) =>
+                        showResponse(
+                            "unschedule-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
 
-        // Statistics endpoint
-        function getStatistics() {
-            const token = document.getElementById('stats-token').value;
+            // Statistics endpoint
+            function getStatistics() {
+                const token = document.getElementById("stats-token").value;
 
-            makeRequest(`${API_BASE}/statistics`, 'GET', token)
-            .then(data => showResponse('stats-response', data, true))
-            .catch(error => showResponse('stats-response', { error: error.message }, false));
-        }
-    </script>
-</body>
+                makeRequest(`${API_BASE}/statistics`, "GET", token)
+                    .then((data) => showResponse("stats-response", data, true))
+                    .catch((error) =>
+                        showResponse(
+                            "stats-response",
+                            { error: error.message },
+                            false,
+                        ),
+                    );
+            }
+        </script>
+    </body>
 </html>

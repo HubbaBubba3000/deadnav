@@ -67,9 +67,13 @@ func main() {
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := gin.New()
+	r.Use(func(c *gin.Context) {
+		c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, 8<<20) // 8 MB
+		c.Next()
+	})
 	r.Use(middleware.Recovery())
 	r.Use(middleware.Logger())
-	r.Use(middleware.CORS())
+	r.Use(middleware.CORS(cfg.Server.AllowedOrigins))
 
 	// Health check (no auth)
 	r.GET("/health", func(c *gin.Context) {

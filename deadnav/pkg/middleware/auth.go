@@ -40,28 +40,3 @@ func JWTAuth(userService *services.UserService) gin.HandlerFunc {
 		c.Next()
 	}
 }
-
-// OptionalAuth returns a middleware that optionally validates the JWT token
-// If token is present and valid, sets user_id in context, otherwise continues
-func OptionalAuth(userService *services.UserService) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		authHeader := c.GetHeader("Authorization")
-		if authHeader == "" {
-			c.Next()
-			return
-		}
-
-		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
-		if tokenString == authHeader {
-			c.Next()
-			return
-		}
-
-		userID, err := userService.ValidateToken(tokenString)
-		if err == nil {
-			c.Set("user_id", userID)
-		}
-
-		c.Next()
-	}
-}

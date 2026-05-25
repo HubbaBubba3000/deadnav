@@ -67,8 +67,8 @@ func (h *TaskHandler) CreateTask(c *gin.Context) {
 	task.UserID = userID
 
 	// Calculate estimated time if not provided.
-	if task.EstimatedTime == 0 {
-		task.EstimatedTime = calculateEstimatedTime(task.Complexity, task.Urgency, task.Importance)
+	if task.EstimatedMinutes == 0 {
+		task.EstimatedMinutes = calculateEstimatedTime(task.Complexity, task.Urgency, task.Importance)
 	}
 
 	if err := h.taskService.CreateTask(&task); err != nil {
@@ -176,7 +176,7 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	}
 
 	// Recalculate estimated time if complexity/urgency/importance were changed.
-	task.EstimatedTime = calculateEstimatedTime(task.Complexity, task.Urgency, task.Importance)
+	task.EstimatedMinutes = calculateEstimatedTime(task.Complexity, task.Urgency, task.Importance)
 
 	if err := h.taskService.UpdateTask(id, userID, &task); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

@@ -6,7 +6,7 @@ CREATE DATABASE IF NOT EXISTS deadnav;
 USE deadnav;
 
 -- Create deadnav_user (requires database to exist for grants)
-CREATE USER IF NOT EXISTS 'deadnav_user'@'%' IDENTIFIED BY 'deadnav_password';
+CREATE USER IF NOT EXISTS 'deadnav_user'@'%' IDENTIFIED BY '${MYSQL_PASSWORD}';
 GRANT ALL PRIVILEGES ON deadnav.* TO 'deadnav_user'@'%';
 FLUSH PRIVILEGES;
 
@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     complexity       INT          NOT NULL DEFAULT 3  COMMENT '1–5',
     urgency          INT          NOT NULL DEFAULT 3  COMMENT '1–5',
     importance       INT          NOT NULL DEFAULT 3  COMMENT '1–5',
-    estimated_time   INT          NOT NULL DEFAULT 0  COMMENT 'minutes',
+    estimated_minutes INT          NOT NULL DEFAULT 0  COMMENT 'minutes',
     created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 

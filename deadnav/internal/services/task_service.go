@@ -28,13 +28,13 @@ func (s *TaskService) CreateTask(task *models.Task) error {
 	result, err := s.db.Exec(
 		`INSERT INTO tasks
 		     (user_id, title, description, status, priority, duration_minutes,
-		      start_date, end_date, complexity, urgency, importance, estimated_time,
+		      start_date, end_date, complexity, urgency, importance, estimated_minutes,
 		      created_at, updated_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.UserID, task.Title, task.Description,
 		task.Status, task.Priority, task.DurationMinutes,
 		task.StartDate, task.EndDate,
-		task.Complexity, task.Urgency, task.Importance, task.EstimatedTime,
+		task.Complexity, task.Urgency, task.Importance, task.EstimatedMinutes,
 		task.CreatedAt, task.UpdatedAt,
 	)
 	if err != nil {
@@ -53,7 +53,7 @@ func (s *TaskService) CreateTask(task *models.Task) error {
 func (s *TaskService) GetAllTasks(userID int64) ([]models.Task, error) {
 	rows, err := s.db.Query(
 		`SELECT id, user_id, title, description, status, priority, duration_minutes,
-		        start_date, end_date, complexity, urgency, importance, estimated_time,
+		        start_date, end_date, complexity, urgency, importance, estimated_minutes,
 		        created_at, updated_at
 		 FROM tasks
 		 WHERE user_id = ?
@@ -78,7 +78,7 @@ func (s *TaskService) GetTaskByID(id int64, userID int64) (*models.Task, error) 
 	var t models.Task
 	err := s.db.QueryRow(
 		`SELECT id, user_id, title, description, status, priority, duration_minutes,
-		        start_date, end_date, complexity, urgency, importance, estimated_time,
+		        start_date, end_date, complexity, urgency, importance, estimated_minutes,
 		        created_at, updated_at
 		 FROM tasks
 		 WHERE id = ? AND user_id = ?`,
@@ -86,7 +86,7 @@ func (s *TaskService) GetTaskByID(id int64, userID int64) (*models.Task, error) 
 	).Scan(
 		&t.ID, &t.UserID, &t.Title, &t.Description,
 		&t.Status, &t.Priority, &t.DurationMinutes,
-		&t.StartDate, &t.EndDate, &t.Complexity, &t.Urgency, &t.Importance, &t.EstimatedTime,
+		&t.StartDate, &t.EndDate, &t.Complexity, &t.Urgency, &t.Importance, &t.EstimatedMinutes,
 		&t.CreatedAt, &t.UpdatedAt,
 	)
 	if err != nil {
@@ -115,13 +115,13 @@ func (s *TaskService) UpdateTask(id int64, userID int64, task *models.Task) erro
 		     complexity       = ?,
 		     urgency          = ?,
 		     importance       = ?,
-		     estimated_time   = ?,
+		     estimated_minutes= ?,
 		     updated_at       = ?
 		 WHERE id = ? AND user_id = ?`,
 		task.Title, task.Description,
 		task.Status, task.Priority, task.DurationMinutes,
 		task.StartDate, task.EndDate,
-		task.Complexity, task.Urgency, task.Importance, task.EstimatedTime,
+		task.Complexity, task.Urgency, task.Importance, task.EstimatedMinutes,
 		task.UpdatedAt,
 		id, userID,
 	)
@@ -168,7 +168,7 @@ func scanTasks(rows *sql.Rows) ([]models.Task, error) {
 		if err := rows.Scan(
 			&t.ID, &t.UserID, &t.Title, &t.Description,
 			&t.Status, &t.Priority, &t.DurationMinutes,
-			&t.StartDate, &t.EndDate, &t.Complexity, &t.Urgency, &t.Importance, &t.EstimatedTime,
+			&t.StartDate, &t.EndDate, &t.Complexity, &t.Urgency, &t.Importance, &t.EstimatedMinutes,
 			&t.CreatedAt, &t.UpdatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanTasks: scan row: %w", err)

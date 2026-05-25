@@ -16,7 +16,8 @@ type Config struct {
 }
 
 type ServerConfig struct {
-	Port string
+	Port           string
+	AllowedOrigins string
 }
 
 type DatabaseConfig struct {
@@ -38,17 +39,25 @@ type TelegramConfig struct {
 
 func Load() (*Config, error) {
 	// Try to load .env file, but don't fail if it doesn't exist
-	// (environment variables can be passed via docker-compose or system env)
 	if err := godotenv.Load(); err != nil {
-		// Only log if it's not a "file not found" error
 		if !os.IsNotExist(err) {
 			log.Printf("Warning loading .env: %v\n", err)
 		}
 	}
 
+	jwtSecret := getEnv("JWT_SECRET", "")
+	if jwtSecret == "" || jwtSecret == "your-secret-key-change-in-production" {
+		if os.Getenv("GIN_MODE") == "release" {
+			log.Fatal("FATAL: JWT_SECRET must be set in production environment")
+		}
+		log.Println("WARNING: Using default JWT_SECRET. Set JWT_SECRET environment variable for production.")
+		jwtSecret = "your-secret-key-change-in-production"
+	}
+
 	return &Config{
 		Server: ServerConfig{
-			Port: getEnv("SERVER_PORT", "8080"),
+			Port:           getEnv("SERVER_PORT", "8080"),
+			AllowedOrigins: getEnv("ALLOWED_ORIGINS", ""),
 		},
 		Database: DatabaseConfig{
 			Host:     getEnv("DB_HOST", "localhost"),
@@ -58,7 +67,7 @@ func Load() (*Config, error) {
 			DBName:   getEnv("DB_NAME", "task_scheduler"),
 		},
 		Auth: AuthConfig{
-			JWTSecret:     getEnv("JWT_SECRET", "your-secret-key-change-in-production"),
+			JWTSecret:     jwtSecret,
 			JWTExpiration: getEnvAsInt("JWT_EXPIRATION_HOURS", 24),
 		},
 		Telegram: TelegramConfig{

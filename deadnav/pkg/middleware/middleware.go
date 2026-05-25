@@ -1,19 +1,41 @@
 package middleware
 
 import (
+	"strings"
 	"time"
+
 	"deadnav/pkg/logger"
 
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
 
-func CORS() gin.HandlerFunc {
+// CORS returns a CORS middleware that validates allowed origins.
+// If allowedOrigins is empty, no origin is allowed (secure default for API).
+// If allowedOrigins is "*", all origins are allowed (use with caution).
+func CORS(allowedOrigins string) gin.HandlerFunc {
 	return func(c *gin.Context) {
-		c.Header("Access-Control-Allow-Origin", "*")
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-		c.Header("Access-Control-Max-Age", "86400")
+		origin := c.GetHeader("Origin")
+
+		// Check if origin is allowed
+		allowed := false
+		if allowedOrigins == "*" {
+			allowed = true
+		} else if allowedOrigins != "" && origin != "" {
+			for _, allowedOrigin := range strings.Split(allowedOrigins, ",") {
+				if strings.TrimSpace(allowedOrigin) == origin {
+					allowed = true
+					break
+				}
+			}
+		}
+
+		if allowed {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+			c.Header("Access-Control-Max-Age", "86400")
+		}
 
 		if c.Request.Method == "OPTIONS" {
 			c.AbortWithStatus(204)
