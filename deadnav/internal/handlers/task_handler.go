@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"net/http"
+	"strconv"
+	"time"
 
 	"deadnav/internal/models"
 	"deadnav/internal/services"
@@ -27,6 +29,77 @@ func calculateEstimatedTime(complexity, urgency, importance int) int {
 		estimatedMinutes = maxTime
 	}
 	return estimatedMinutes
+}
+
+// parseTaskFilter extracts TaskFilter from query parameters.
+func parseTaskFilter(c *gin.Context, userID int64) (models.TaskFilter, error) {
+	var priority *int
+	if pStr := c.Query("priority"); pStr != "" {
+		p, err := strconv.Atoi(pStr)
+		if err != nil {
+			return models.TaskFilter{}, err
+		}
+		priority = &p
+	}
+
+	filter := models.TaskFilter{
+		UserID:   userID,
+		Status:   c.Query("status"),
+		Priority: priority,
+	}
+
+	if from := c.Query("start_date_from"); from != "" {
+		t, err := time.Parse("2006-01-02", from)
+		if err != nil {
+			return models.TaskFilter{}, err
+		}
+		filter.StartDateFrom = t
+	}
+	if to := c.Query("start_date_to"); to != "" {
+		t, err := time.Parse("2006-01-02", to)
+		if err != nil {
+			return models.TaskFilter{}, err
+		}
+		filter.StartDateTo = t
+	}
+	if from := c.Query("end_date_from"); from != "" {
+		t, err := time.Parse("2006-01-02", from)
+		if err != nil {
+			return models.TaskFilter{}, err
+		}
+		filter.EndDateFrom = t
+	}
+	if to := c.Query("end_date_to"); to != "" {
+		t, err := time.Parse("2006-01-02", to)
+		if err != nil {
+			return models.TaskFilter{}, err
+		}
+		filter.EndDateTo = t
+	}
+
+	return filter, nil
+}
+
+// parseScheduleFilter extracts ScheduleFilter from query parameters.
+func parseScheduleFilter(c *gin.Context, userID int64) (models.ScheduleFilter, error) {
+	filter := models.ScheduleFilter{UserID: userID}
+
+	if from := c.Query("from"); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return models.ScheduleFilter{}, err
+		}
+		filter.From = t
+	}
+	if to := c.Query("to"); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return models.ScheduleFilter{}, err
+		}
+		filter.To = t
+	}
+
+	return filter, nil
 }
 
 // TaskHandler handles HTTP requests for task management.
@@ -125,17 +198,30 @@ func (h *TaskHandler) GetTask(c *gin.Context) {
 
 // GetAllTasks godoc
 // @Summary List tasks
-// @Description Return all tasks that belong to the authenticated user.
+// @Description Return all tasks that belong to the authenticated user. Supports optional filtering via query parameters.
 // @Tags tasks
 // @Produce json
 // @Security BearerAuth
+// @Param   status         query string false "Filter by status (pending, in_progress, completed, cancelled)"
+// @Param   priority       query int    false "Filter by priority (1-5)"
+// @Param   start_date_from query string false "Filter tasks with start_date >= this date (YYYY-MM-DD)"
+// @Param   start_date_to   query string false "Filter tasks with start_date <= this date (YYYY-MM-DD)"
+// @Param   end_date_from   query string false "Filter tasks with end_date >= this date (YYYY-MM-DD)"
+// @Param   end_date_to     query string false "Filter tasks with end_date <= this date (YYYY-MM-DD)"
 // @Success 200 {array}  models.Task
+// @Failure 400 {object} errorResponse
 // @Failure 401 {object} errorResponse
 // @Router /api/v1/tasks [get]
 func (h *TaskHandler) GetAllTasks(c *gin.Context) {
 	userID := mustUserID(c)
 
-	tasks, err := h.taskService.GetAllTasks(userID)
+	filter, err := parseTaskFilter(c, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid filter: " + err.Error()})
+		return
+	}
+
+	tasks, err := h.taskService.GetTasks(filter)
 	if err != nil {
 		internalError(c, "GetAllTasks: query", err)
 		return
@@ -188,10 +274,12 @@ func (h *TaskHandler) UpdateTask(c *gin.Context) {
 	}
 
 	// Re-fetch the updated task so we can reschedule with accurate data.
-	updated, _ := h.taskService.GetTaskByID(id, userID)
+	var updated *models.Task
 	var schedule *models.Schedule
 	var schedWarning string
-	if updated != nil {
+	if updated, err = h.taskService.GetTaskByID(id, userID); err != nil {
+		schedWarning = "could not fetch updated task: " + err.Error()
+	} else {
 		updated.ID = id
 		schedule, err = h.scheduleService.AutoScheduleTask(updated, userID)
 		if err != nil {

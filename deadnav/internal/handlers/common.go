@@ -53,6 +53,7 @@ func parseID(c *gin.Context) (int64, error) {
 // client, preventing internal details (database errors, stack traces, etc.)
 // from leaking outward.
 func internalError(c *gin.Context, msg string, err error) {
+	c.Error(err)
 	logger.GetLogger().Error(msg, zap.Error(err))
 	c.JSON(http.StatusInternalServerError, errorResponse{Error: "internal server error"})
 }

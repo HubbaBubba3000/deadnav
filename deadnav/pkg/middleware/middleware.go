@@ -57,14 +57,24 @@ func Logger() gin.HandlerFunc {
 		latency := time.Since(start)
 		statusCode := c.Writer.Status()
 
-		logger.GetLogger().Info("request",
+		log := logger.GetLogger()
+		fields := []zap.Field{
 			zap.Int("status", statusCode),
 			zap.String("method", c.Request.Method),
 			zap.String("path", path),
 			zap.String("query", query),
 			zap.Duration("latency", latency),
 			zap.String("client_ip", c.ClientIP()),
-		)
+		}
+
+		if statusCode >= 400 {
+			if errMsg := c.Errors.String(); errMsg != "" {
+				fields = append(fields, zap.String("error", errMsg))
+			}
+			log.Error("request", fields...)
+		} else {
+			log.Info("request", fields...)
+		}
 	}
 }
 

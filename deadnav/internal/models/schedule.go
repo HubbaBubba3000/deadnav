@@ -13,6 +13,18 @@ type Schedule struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
+// ScheduleFilter holds optional filter criteria for querying schedules.
+type ScheduleFilter struct {
+	UserID int64
+	From   time.Time
+	To     time.Time
+}
+
+// HasFilters returns true if at least one filter criterion is set.
+func (f ScheduleFilter) HasFilters() bool {
+	return !f.From.IsZero() || !f.To.IsZero()
+}
+
 // ScheduleSlot is a free (unoccupied) time interval returned by the
 // free-slot query. It carries no database identity.
 type ScheduleSlot struct {

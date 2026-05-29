@@ -51,23 +51,54 @@ func (s *TaskService) CreateTask(task *models.Task) error {
 
 // GetAllTasks returns all tasks that belong to userID, newest first.
 func (s *TaskService) GetAllTasks(userID int64) ([]models.Task, error) {
-	rows, err := s.db.Query(
-		`SELECT id, user_id, title, description, status, priority, duration_minutes,
-		        start_date, end_date, complexity, urgency, importance, estimated_minutes,
-		        created_at, updated_at
-		 FROM tasks
-		 WHERE user_id = ?
-		 ORDER BY created_at DESC`,
-		userID,
-	)
+	return s.GetTasks(models.TaskFilter{UserID: userID})
+}
+
+// GetTasks returns tasks matching the given filter, newest first.
+func (s *TaskService) GetTasks(filter models.TaskFilter) ([]models.Task, error) {
+	query := `SELECT id, user_id, title, description, status, priority, duration_minutes,
+	        start_date, end_date, complexity, urgency, importance, estimated_minutes,
+	        created_at, updated_at
+	 FROM tasks
+	 WHERE user_id = ?`
+	args := []any{filter.UserID}
+
+	if filter.Status != "" {
+		query += " AND status = ?"
+		args = append(args, filter.Status)
+	}
+	if filter.Priority != nil {
+		query += " AND priority = ?"
+		args = append(args, *filter.Priority)
+	}
+	if !filter.StartDateFrom.IsZero() {
+		query += " AND start_date >= ?"
+		args = append(args, filter.StartDateFrom)
+	}
+	if !filter.StartDateTo.IsZero() {
+		query += " AND start_date <= ?"
+		args = append(args, filter.StartDateTo)
+	}
+	if !filter.EndDateFrom.IsZero() {
+		query += " AND end_date >= ?"
+		args = append(args, filter.EndDateFrom)
+	}
+	if !filter.EndDateTo.IsZero() {
+		query += " AND end_date <= ?"
+		args = append(args, filter.EndDateTo)
+	}
+
+	query += " ORDER BY created_at DESC"
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllTasks: query: %w", err)
+		return nil, fmt.Errorf("GetTasks: query: %w", err)
 	}
 	defer rows.Close()
 
 	tasks, err := scanTasks(rows)
 	if err != nil {
-		return nil, fmt.Errorf("GetAllTasks: %w", err)
+		return nil, fmt.Errorf("GetTasks: %w", err)
 	}
 	return tasks, nil
 }

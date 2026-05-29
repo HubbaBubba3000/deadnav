@@ -29,17 +29,26 @@ func NewScheduleHandler(scheduleService *services.ScheduleService, taskService *
 
 // GetSchedule godoc
 // @Summary Get user schedule
-// @Description Return all scheduled time blocks for the authenticated user, ordered by start time.
+// @Description Return all scheduled time blocks for the authenticated user.
+// @Description Supports optional filtering via query parameters.
 // @Tags schedule
 // @Produce json
 // @Security BearerAuth
+// @Param   from query string false "Filter schedules with start_time >= this time (RFC3339)"
+// @Param   to   query string false "Filter schedules with end_time <= this time (RFC3339)"
 // @Success 200 {array}  models.Schedule
 // @Failure 401 {object} errorResponse
 // @Router /api/v1/schedule [get]
 func (h *ScheduleHandler) GetSchedule(c *gin.Context) {
 	userID := mustUserID(c)
 
-	schedules, err := h.scheduleService.GetUserSchedule(userID)
+	filter, err := parseScheduleFilter(c, userID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid filter: " + err.Error()})
+		return
+	}
+
+	schedules, err := h.scheduleService.GetSchedules(filter)
 	if err != nil {
 		internalError(c, "GetSchedule: query", err)
 		return

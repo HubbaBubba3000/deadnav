@@ -115,21 +115,36 @@ func (s *ScheduleService) RemoveSchedule(taskID int64, userID int64) error {
 
 // GetUserSchedule returns all schedules for the user, ordered by start time.
 func (s *ScheduleService) GetUserSchedule(userID int64) ([]models.Schedule, error) {
-	rows, err := s.db.Query(
-		`SELECT id, task_id, user_id, start_time, end_time, created_at
-		 FROM schedules
-		 WHERE user_id = ?
-		 ORDER BY start_time`,
-		userID,
-	)
+	return s.GetSchedules(models.ScheduleFilter{UserID: userID})
+}
+
+// GetSchedules returns schedules matching the given filter, ordered by start time.
+func (s *ScheduleService) GetSchedules(filter models.ScheduleFilter) ([]models.Schedule, error) {
+	query := `SELECT id, task_id, user_id, start_time, end_time, created_at
+	 FROM schedules
+	 WHERE user_id = ?`
+	args := []any{filter.UserID}
+
+	if !filter.From.IsZero() {
+		query += " AND start_time >= ?"
+		args = append(args, filter.From)
+	}
+	if !filter.To.IsZero() {
+		query += " AND end_time <= ?"
+		args = append(args, filter.To)
+	}
+
+	query += " ORDER BY start_time"
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
-		return nil, fmt.Errorf("GetUserSchedule: query: %w", err)
+		return nil, fmt.Errorf("GetSchedules: query: %w", err)
 	}
 	defer rows.Close()
 
 	schedules, err := scanSchedules(rows)
 	if err != nil {
-		return nil, fmt.Errorf("GetUserSchedule: %w", err)
+		return nil, fmt.Errorf("GetSchedules: %w", err)
 	}
 	return schedules, nil
 }

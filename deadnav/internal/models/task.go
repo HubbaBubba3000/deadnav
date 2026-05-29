@@ -26,3 +26,21 @@ type Task struct {
 	CreatedAt        time.Time `json:"created_at"`
 	UpdatedAt        time.Time `json:"updated_at"`
 }
+
+// TaskFilter holds optional filter criteria for querying tasks.
+type TaskFilter struct {
+	UserID        int64
+	Status        string
+	Priority      *int
+	StartDateFrom time.Time
+	StartDateTo   time.Time
+	EndDateFrom   time.Time
+	EndDateTo     time.Time
+}
+
+// HasFilters returns true if at least one filter criterion is set.
+func (f TaskFilter) HasFilters() bool {
+	return f.Status != "" || f.Priority != nil ||
+		!f.StartDateFrom.IsZero() || !f.StartDateTo.IsZero() ||
+		!f.EndDateFrom.IsZero() || !f.EndDateTo.IsZero()
+}
