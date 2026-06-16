@@ -2,6 +2,7 @@ import os
 import sys
 from datetime import datetime, UTC
 from zoneinfo import ZoneInfo
+import json
 
 import pymysql
 import vk_api
@@ -12,6 +13,22 @@ DB_HOST = os.getenv("MYSQL_HOST")
 DB_USER = os.getenv("MYSQL_USER")
 DB_PASSWORD = os.getenv("MYSQL_PASSWORD")
 DB_NAME = os.getenv("MYSQL_NAME")
+
+deadline_keyboard = {
+    "inline": True,
+    "buttons": [
+        [
+            {
+                "action": {
+                    "type": "open_app",
+                    "app_id": 54617588,
+                    "label": "Открыть Дедлайн-Навигатор"
+                }
+            }
+        ]
+    ]
+}
+
 
 if not TOKEN:
     print("[CRON ERROR] Переменная VK_API_TOKEN не задана!")
@@ -165,7 +182,11 @@ try:
                 vk.messages.send(
                     peer_id=user["vk_id"],
                     random_id=0,
-                    message=message_text
+                    message=message_text,
+                    keyboard=json.dumps(
+                        deadline_keyboard,
+                        ensure_ascii=False
+                    )
                 )
 
                 print(

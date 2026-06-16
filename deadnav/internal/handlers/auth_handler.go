@@ -125,9 +125,14 @@ type Notification struct {
 }
 
 func (h *AuthHandler) ToggleNotification(c *gin.Context) {
-	userID := mustUserID(c)
 
-	user, err := h.UserService.GetUserByID(userID)
+	userID, exists := c.Get("user_id")
+	if !exists {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "необходима авторизация"})
+		return
+	}
+
+	user, err := h.UserService.GetUserByID(userID.(int64))
 	if err != nil {
 		internalError(c, "togglenotification: fetch", err)
 		return
@@ -139,7 +144,7 @@ func (h *AuthHandler) ToggleNotification(c *gin.Context) {
 		return
 	}
 
-	if err := h.UserService.UpdateNotification(int64(userID), req.Enable); err != nil {
+	if err := h.UserService.UpdateNotification(userID.(int64), req.Enable); err != nil {
 		internalError(c, "togglenotification: update", err)
 		return
 	}

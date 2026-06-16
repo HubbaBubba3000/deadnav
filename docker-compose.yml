@@ -46,8 +46,10 @@ services:
     networks:
       - deadnav_internal
     depends_on:
-      - "app"
-      - "mysql"
+      app:
+        condition: service_healthy
+      mysql:
+        condition: service_healthy
 
   dozzle:
     image: amir20/dozzle:latest
@@ -55,7 +57,7 @@ services:
     restart: unless-stopped
     # Убрали ports 9999, теперь доступ строго через nginx по dozzle.xelox.me
     expose:
-      - "8080" 
+      - "8080"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
@@ -101,7 +103,13 @@ services:
       app:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8083/game/g_health', timeout=5)"]
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://localhost:8083/game/g_health', timeout=5)",
+        ]
       interval: 15s
       timeout: 5s
       retries: 3
