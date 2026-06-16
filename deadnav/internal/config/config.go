@@ -9,10 +9,12 @@ import (
 )
 
 type Config struct {
-	Server   ServerConfig
-	Database DatabaseConfig
-	Auth     AuthConfig
-	Telegram TelegramConfig
+	Server    ServerConfig
+	Database  DatabaseConfig
+	Auth      AuthConfig
+	Telegram  TelegramConfig
+	VKID      VKIDConfig
+	RateLimit RateLimitConfig
 }
 
 type ServerConfig struct {
@@ -33,8 +35,24 @@ type AuthConfig struct {
 	JWTExpiration int // in hours
 }
 
+// RateLimitConfig controls the in-memory rate limiter applied to authentication
+// endpoints. The values are expressed in the ulule/limiter "limit-period"
+// format, e.g. "5-M" means 5 requests per minute per client IP.
+//
+// Period unit suffixes: S (second), M (minute), H (hour), D (day).
+// Set Rate to an empty string to disable the limiter entirely.
+type RateLimitConfig struct {
+	Rate string
+}
+
 type TelegramConfig struct {
 	BotToken string
+}
+
+type VKIDConfig struct {
+	ClientID     string
+	ClientSecret string
+	RedirectURL  string
 }
 
 func Load() (*Config, error) {
@@ -72,6 +90,14 @@ func Load() (*Config, error) {
 		},
 		Telegram: TelegramConfig{
 			BotToken: getEnv("TELEGRAM_BOT_TOKEN", ""),
+		},
+		VKID: VKIDConfig{
+			ClientID:     getEnv("VK_ID_CLIENT_ID", ""),
+			ClientSecret: getEnv("VK_ID_CLIENT_SECRET", ""),
+			RedirectURL:  getEnv("VK_ID_REDIRECT_URL", "http://localhost:8080/api/v1/auth/vk/callback"),
+		},
+		RateLimit: RateLimitConfig{
+			Rate: getEnv("AUTH_RATE_LIMIT", "5-M"),
 		},
 	}, nil
 }

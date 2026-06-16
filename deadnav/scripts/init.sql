@@ -13,14 +13,16 @@ FLUSH PRIVILEGES;
 CREATE TABLE IF NOT EXISTS users (
     id            BIGINT AUTO_INCREMENT PRIMARY KEY,
     username      VARCHAR(255)  NOT NULL,
-    email         VARCHAR(255)  NOT NULL DEFAULT '',
+    email         VARCHAR(255)  NULL     DEFAULT NULL,
     password_hash VARCHAR(255)  NOT NULL DEFAULT '',
     telegram_id   BIGINT        NULL     UNIQUE,
-    auth_provider VARCHAR(50)   NOT NULL DEFAULT 'local' COMMENT 'local | telegram',
+    vk_id         BIGINT        NULL     UNIQUE,
+    auth_provider VARCHAR(50)   NOT NULL DEFAULT 'local' COMMENT 'local | telegram | vk',
     created_at    DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
     UNIQUE KEY uk_username (username),
-    UNIQUE KEY uk_email    (email)
+    -- Email is optional: only enforce uniqueness when it has been provided.
+    UNIQUE KEY uk_email    ((CASE WHEN email IS NULL THEN NULL ELSE email END))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -40,6 +42,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     estimated_minutes INT          NOT NULL DEFAULT 0  COMMENT 'minutes',
     created_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at       DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    moved_deadline   BOOLEAN      NOT NULL DEFAULT FALSE,
 
     INDEX idx_user_status (user_id, status),
     INDEX idx_user_dates  (user_id, start_date, end_date),
@@ -50,12 +53,15 @@ CREATE TABLE IF NOT EXISTS tasks (
 CREATE TABLE IF NOT EXISTS schedules (
     id          BIGINT AUTO_INCREMENT PRIMARY KEY,
     task_id     BIGINT   NOT NULL UNIQUE,
+    title       VARCHAR(255) NOT NULL,
+    status           VARCHAR(50)  NOT NULL DEFAULT 'pending'
+                     COMMENT 'pending | in_progress | completed | cancelled',
     user_id     BIGINT   NOT NULL,
     start_time  DATETIME NOT NULL,
     end_time    DATETIME NOT NULL,
     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 
-    INDEX idx_sched_user_timerange (user_id, start_time, end_time),
+    INDEX idx_sched_user_timerange (user_id, start_time, end_time, title, status),
 
     CONSTRAINT fk_schedules_task FOREIGN KEY (task_id) REFERENCES tasks(id) ON DELETE CASCADE,
     CONSTRAINT fk_schedules_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -70,4 +76,29 @@ CREATE TABLE IF NOT EXISTS user_preferences (
     timezone         VARCHAR(50)  NOT NULL DEFAULT 'UTC',
 
     CONSTRAINT fk_prefs_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS user_statistics (
+    user_id              BIGINT       NOT NULL,
+    month                DATE         NOT NULL,
+    total_tasks          INT          NOT NULL DEFAULT 0,
+    completed_tasks      INT          NOT NULL DEFAULT 0,
+    overdue_completed    INT          NOT NULL DEFAULT 0,
+    moved_deadlines      INT          NOT NULL DEFAULT 0,
+    created_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at           DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+
+    PRIMARY KEY (user_id, month),
+    CONSTRAINT fk_stats_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+CREATE TABLE IF NOT EXISTS heatmap_data (
+    id           BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id      BIGINT       NOT NULL,
+    date         DATE         NOT NULL,
+    value        FLOAT          NOT NULL DEFAULT 0,
+    created_at   DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+    UNIQUE KEY uk_user_date (user_id, date),
+    CONSTRAINT fk_heatmap_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;

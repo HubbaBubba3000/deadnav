@@ -2,12 +2,13 @@ package services
 
 import (
 	"database/sql"
+	"deadnav/internal/models"
+	"deadnav/internal/models/dto"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
 	"time"
-
-	"deadnav/internal/models"
 )
 
 // StatisticsService computes analytical data for a user's tasks.
@@ -56,6 +57,294 @@ func (s *StatisticsService) GetStatistics(userID int64) (*models.Statistics, err
 	return stats, nil
 }
 
+// getCachedMonthlyStatistics retrieves monthly statistics from the cache.
+// Returns sql.ErrNoRows if no statistics are found for the user.
+func (s *StatisticsService) getCachedMonthlyStatistics(userID int64, year int, month int) (*dto.MonthlyStatistics, error) {
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
+	monthlyStats := &dto.MonthlyStatistics{
+		Month:   monthStart,
+		Heatmap: make([]dto.HeatmapDay, 0),
+	}
+
+	// Get cached statistics from database. The (user_id, month) primary key
+	// guarantees at most one row, so a range scan is the cheapest lookup.
+	if err := s.db.QueryRow(
+		`SELECT total_tasks, completed_tasks, overdue_completed, moved_deadlines
+		 FROM user_statistics
+		 WHERE user_id = ? AND month = ?`,
+		userID, monthStart).Scan(
+		&monthlyStats.TotalTasks, &monthlyStats.CompletedTasks,
+		&monthlyStats.OverdueCompleted, &monthlyStats.MovedDeadlines); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, sql.ErrNoRows
+		}
+		return nil, err
+	}
+
+	// Read heatmap rows once into a map keyed by the canonical date string.
+	rows, err := s.db.Query(
+		`SELECT DATE_FORMAT(date, '%Y-%m-%d'), value
+		 FROM heatmap_data
+		 WHERE user_id = ? AND date >= ? AND date < ?
+		 ORDER BY date`,
+		userID, monthStart, monthEnd)
+	if err != nil {
+		return nil, err
+	}
+	heatmapByDate := make(map[string]float64)
+	for rows.Next() {
+		var dateKey string
+		var value float64
+		if err := rows.Scan(&dateKey, &value); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		heatmapByDate[dateKey] = value
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
+	rows.Close()
+
+	daysInMonth := monthEnd.AddDate(0, 0, -1).Day()
+	for day := 1; day <= daysInMonth; day++ {
+		date := time.Date(year, time.Month(month), day, 0, 0, 0, 0, time.UTC)
+		key := date.Format("2006-01-02")
+		value, ok := heatmapByDate[key]
+		if !ok {
+			value = 0
+		}
+		monthlyStats.Heatmap = append(monthlyStats.Heatmap, dto.HeatmapDay{
+			Date:  date,
+			Value: value,
+		})
+	}
+
+	return monthlyStats, nil
+}
+
+// CreateMonthlyStatistics creates new monthly statistics for a user.
+// If statistics already exist, they will be overwritten.
+func (s *StatisticsService) CreateMonthlyStatistics(userID int64, stats *dto.MonthlyStatistics, year int, month int) error {
+	return s.updateMonthlyStatistics(userID, stats, year, month)
+}
+
+// UpdateMonthlyStatistics updates existing monthly statistics for a user.
+// If statistics don't exist, they will be created.
+func (s *StatisticsService) UpdateMonthlyStatistics(userID int64, stats *dto.MonthlyStatistics, year int, month int) error {
+	return s.updateMonthlyStatistics(userID, stats, year, month)
+}
+
+// updateMonthlyStatistics is a private helper method that performs the actual database operations.
+func (s *StatisticsService) updateMonthlyStatistics(userID int64, stats *dto.MonthlyStatistics, year int, month int) error {
+	if month < 1 || month > 12 {
+		return fmt.Errorf("invalid month: %d", month)
+	}
+
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("updateMonthlyStatistics: begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	monthStart := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	monthEnd := monthStart.AddDate(0, 1, 0)
+
+	_, err = tx.Exec(
+		`INSERT INTO user_statistics (user_id, month, total_tasks, completed_tasks, overdue_completed, moved_deadlines)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+			 total_tasks       = VALUES(total_tasks),
+			 completed_tasks   = VALUES(completed_tasks),
+			 overdue_completed = VALUES(overdue_completed),
+			 moved_deadlines   = VALUES(moved_deadlines),
+			 updated_at        = CURRENT_TIMESTAMP`,
+		userID, monthStart, stats.TotalTasks, stats.CompletedTasks,
+		stats.OverdueCompleted, stats.MovedDeadlines)
+	if err != nil {
+		return fmt.Errorf("updateMonthlyStatistics: upsert user_statistics: %w", err)
+	}
+
+	_, err = tx.Exec(
+		`DELETE FROM heatmap_data
+		 WHERE user_id = ? AND date >= ? AND date < ?`,
+		userID, monthStart, monthEnd)
+	if err != nil {
+		return fmt.Errorf("updateMonthlyStatistics: delete heatmap_data: %w", err)
+	}
+
+	if len(stats.Heatmap) > 0 {
+		args := make([]any, 0, len(stats.Heatmap)*3)
+		placeholders := make([]byte, 0, len(stats.Heatmap)*8)
+		for i, day := range stats.Heatmap {
+			if i > 0 {
+				placeholders = append(placeholders, ',')
+			}
+			placeholders = append(placeholders, []byte("(?, ?, ?)")...)
+			date := day.Date.UTC()
+			dayStart := time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, time.UTC)
+			args = append(args, userID, dayStart, day.Value)
+		}
+
+		_, err = tx.Exec(
+			`INSERT INTO heatmap_data (user_id, date, value) VALUES `+string(placeholders),
+			args...,
+		)
+		if err != nil {
+			return fmt.Errorf("updateMonthlyStatistics: insert heatmap_data: %w", err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("updateMonthlyStatistics: commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+// DeleteMonthlyStatistics removes all monthly statistics for a user.
+func (s *StatisticsService) DeleteMonthlyStatistics(userID int64) error {
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("DeleteMonthlyStatistics: begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.Exec(`DELETE FROM user_statistics WHERE user_id = ?`, userID)
+	if err != nil {
+		return fmt.Errorf("DeleteMonthlyStatistics: delete user_statistics: %w", err)
+	}
+
+	_, err = tx.Exec(`DELETE FROM heatmap_data WHERE user_id = ?`, userID)
+	if err != nil {
+		return fmt.Errorf("DeleteMonthlyStatistics: delete heatmap_data: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("DeleteMonthlyStatistics: commit transaction: %w", err)
+	}
+
+	return nil
+}
+
+func (s *StatisticsService) GetMonthlyStatistics(
+	userID int64,
+	year, month int,
+) (*dto.MonthlyStatistics, error) {
+
+	if month < 1 || month > 12 {
+		return nil, fmt.Errorf("invalid month: %d", month)
+	}
+
+	if year == 0 || month == 0 {
+		now := time.Now().UTC()
+		year, month = now.Year(), int(now.Month())
+	}
+
+	stats, err := s.getCachedMonthlyStatistics(userID, year, month)
+	if err == nil {
+		return stats, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("cache lookup: %w", err)
+	}
+
+	start := time.Date(year, time.Month(month), 1, 0, 0, 0, 0, time.UTC)
+	end := start.AddDate(0, 1, 0)
+
+	result := &dto.MonthlyStatistics{
+		Month:   start,
+		Heatmap: make([]dto.HeatmapDay, 0, 31),
+	}
+
+	// --- агрегированные метрики (один запрос вместо трёх) ---
+	err = s.db.QueryRow(`
+		SELECT
+			COUNT(*) AS total,
+			SUM(status = 'completed') AS completed,
+			SUM(status = 'completed' AND updated_at > end_date) AS overdue
+		FROM tasks
+		WHERE user_id = ?
+		  AND end_date >= ? AND end_date < ?
+	`, userID, start, end).Scan(
+		&result.TotalTasks,
+		&result.CompletedTasks,
+		&result.OverdueCompleted,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("GetMonthlyStatistics: aggregate stats: %w", err)
+	}
+
+	// --- moved deadlines ---
+	// Используем колонку moved_deadline из таблицы tasks, которую UpdateTask
+	// выставляет в TRUE при каждом изменении end_date. Таблица task_history
+	// в схеме отсутствует, поэтому JOIN к ней не нужен.
+	if err := s.db.QueryRow(`
+		SELECT COUNT(*)
+		FROM tasks
+		WHERE user_id = ?
+		  AND status = 'completed'
+		  AND moved_deadline = TRUE
+		  AND updated_at >= ? AND updated_at < ?
+	`, userID, start, end).Scan(&result.MovedDeadlines); err != nil {
+		return nil, fmt.Errorf("GetMonthlyStatistics: moved deadlines: %w", err)
+	}
+
+	// --- heatmap (один запрос вместо 2×N) ---
+	rows, err := s.db.Query(`
+		SELECT
+			DATE(end_date) AS day,
+			COUNT(*) AS planned,
+			SUM(status = 'completed') AS completed
+		FROM tasks
+		WHERE user_id = ?
+		  AND end_date >= ? AND end_date < ?
+		GROUP BY day
+	`, userID, start, end)
+	if err != nil {
+		return nil, fmt.Errorf("GetMonthlyStatistics: heatmap query: %w", err)
+	}
+	defer rows.Close()
+
+	heatmap := make(map[string]dto.HeatmapDay)
+	for rows.Next() {
+		var day string
+		var planned, completed int64
+		if err := rows.Scan(&day, &planned, &completed); err != nil {
+			return nil, fmt.Errorf("GetMonthlyStatistics: heatmap scan: %w", err)
+		}
+		value := 0.0
+		if planned > 0 {
+			value = float64(completed) / float64(planned)
+			if value > 1 {
+				value = 1
+			}
+		}
+		date, _ := time.Parse("2006-01-02", day)
+		heatmap[day] = dto.HeatmapDay{Date: date, Value: value}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("GetMonthlyStatistics: heatmap rows: %w", err)
+	}
+
+	// Заполняем все дни месяца, подставляя 0 для дней без задач.
+	days := end.AddDate(0, 0, -1).Day()
+	for d := 1; d <= days; d++ {
+		date := time.Date(year, time.Month(month), d, 0, 0, 0, 0, time.UTC)
+		key := date.Format("2006-01-02")
+		if v, ok := heatmap[key]; ok {
+			result.Heatmap = append(result.Heatmap, v)
+		} else {
+			result.Heatmap = append(result.Heatmap, dto.HeatmapDay{Date: date, Value: 0})
+		}
+	}
+
+	return result, nil
+}
+
 // ---------------------------------------------------------------------------
 // Private computation helpers
 // ---------------------------------------------------------------------------
@@ -84,47 +373,44 @@ func (s *StatisticsService) computeBasicCounts(stats *models.Statistics, userID 
 		}
 	}
 
-	// Tasks grouped by status
-	rows, err := s.db.Query(
+	r, err := s.db.Query(
 		`SELECT status, COUNT(*) FROM tasks WHERE user_id = ? GROUP BY status`, userID,
 	)
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
-	for rows.Next() {
+	defer r.Close()
+	for r.Next() {
 		var status string
 		var count int64
-		if err := rows.Scan(&status, &count); err != nil {
+		if err := r.Scan(&status, &count); err != nil {
 			return err
 		}
 		stats.TasksByStatus[status] = count
 	}
-	if err := rows.Err(); err != nil {
+	if err := r.Err(); err != nil {
 		return err
 	}
 
-	// Tasks grouped by priority
-	rows2, err := s.db.Query(
+	r2, err := s.db.Query(
 		`SELECT priority, COUNT(*) FROM tasks WHERE user_id = ? GROUP BY priority`, userID,
 	)
 	if err != nil {
 		return err
 	}
-	defer rows2.Close()
-	for rows2.Next() {
+	defer r2.Close()
+	for r2.Next() {
 		var priority int
 		var count int64
-		if err := rows2.Scan(&priority, &count); err != nil {
+		if err := r2.Scan(&priority, &count); err != nil {
 			return err
 		}
 		stats.TasksByPriority[priority] = count
 	}
-	return rows2.Err()
+	return nil
 }
 
 func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userID int64) error {
-	// Average duration (completed tasks only).
 	if err := s.db.QueryRow(
 		`SELECT COALESCE(AVG(TIMESTAMPDIFF(HOUR, start_date, end_date)), 0)
 		 FROM tasks WHERE user_id = ? AND status = 'completed'`, userID,
@@ -146,8 +432,7 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userI
 		return err
 	}
 
-	// Median (requires fetching all durations into Go).
-	rows, err := s.db.Query(
+	r, err := s.db.Query(
 		`SELECT TIMESTAMPDIFF(HOUR, start_date, end_date)
 		 FROM tasks
 		 WHERE user_id = ? AND status = 'completed' AND end_date > start_date
@@ -156,17 +441,17 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userI
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer r.Close()
 
 	var durations []float64
-	for rows.Next() {
+	for r.Next() {
 		var d float64
-		if err := rows.Scan(&d); err != nil {
+		if err := r.Scan(&d); err != nil {
 			return err
 		}
 		durations = append(durations, d)
 	}
-	if err := rows.Err(); err != nil {
+	if err := r.Err(); err != nil {
 		return err
 	}
 
@@ -179,8 +464,7 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userI
 		}
 	}
 
-	// Average duration by priority.
-	rows2, err := s.db.Query(
+	r2, err := s.db.Query(
 		`SELECT priority, AVG(TIMESTAMPDIFF(HOUR, start_date, end_date))
 		 FROM tasks
 		 WHERE user_id = ? AND status = 'completed' AND end_date > start_date
@@ -189,20 +473,19 @@ func (s *StatisticsService) computeDurationStats(stats *models.Statistics, userI
 	if err != nil {
 		return err
 	}
-	defer rows2.Close()
-	for rows2.Next() {
+	defer r2.Close()
+	for r2.Next() {
 		var priority int
 		var avg float64
-		if err := rows2.Scan(&priority, &avg); err != nil {
+		if err := r2.Scan(&priority, &avg); err != nil {
 			return err
 		}
 		stats.AvgDurationByPriority[priority] = avg
 	}
-	return rows2.Err()
+	return nil
 }
 
 func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, userID int64) error {
-	// Overdue: past deadline, not completed/cancelled.
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM tasks
 		 WHERE user_id = ? AND end_date < NOW()
@@ -211,7 +494,6 @@ func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, user
 		return err
 	}
 
-	// Upcoming deadlines (next 7 days).
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM tasks
 		 WHERE user_id = ?
@@ -221,7 +503,6 @@ func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, user
 		return err
 	}
 
-	// Average delay for tasks that were completed after their deadline.
 	if err := s.db.QueryRow(
 		`SELECT COALESCE(AVG(TIMESTAMPDIFF(HOUR, end_date, updated_at)), 0)
 		 FROM tasks
@@ -230,8 +511,6 @@ func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, user
 		return err
 	}
 
-	// On-time completion rate: completed on or before end_date.
-	// "On time" is approximated as updated_at <= end_date.
 	var onTime, total int64
 	if err := s.db.QueryRow(
 		`SELECT
@@ -249,7 +528,6 @@ func (s *StatisticsService) computeTimeBasedStats(stats *models.Statistics, user
 
 func (s *StatisticsService) computeTrendStats(stats *models.Statistics, userID int64) error {
 	now := time.Now()
-	// Start of current week (Sunday = day 0).
 	startOfWeek := now.Truncate(24*time.Hour).AddDate(0, 0, -int(now.Weekday()))
 	startOfLastWeek := startOfWeek.AddDate(0, 0, -7)
 
@@ -300,7 +578,6 @@ func (s *StatisticsService) computePriorityStats(stats *models.Statistics, userI
 		return err
 	}
 
-	// High-priority completion rate.
 	var highTotal, highCompleted int64
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*),
@@ -313,7 +590,6 @@ func (s *StatisticsService) computePriorityStats(stats *models.Statistics, userI
 		stats.HighPriorityCompletionRate = math.Round(float64(highCompleted)/float64(highTotal)*100*100) / 100
 	}
 
-	// Low-priority completion rate.
 	var lowTotal, lowCompleted int64
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*),
@@ -329,7 +605,6 @@ func (s *StatisticsService) computePriorityStats(stats *models.Statistics, userI
 }
 
 func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics, userID int64) error {
-	// Average tasks per day over the last 30 days.
 	var last30Days int64
 	if err := s.db.QueryRow(
 		`SELECT COUNT(*) FROM tasks
@@ -339,8 +614,7 @@ func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics, userI
 	}
 	stats.AvgTasksPerDay = math.Round(float64(last30Days)/30*100) / 100
 
-	// Tasks by day of week.
-	rows, err := s.db.Query(
+	r, err := s.db.Query(
 		`SELECT DAYNAME(created_at) AS day_name, COUNT(*)
 		 FROM tasks
 		 WHERE user_id = ?
@@ -350,14 +624,14 @@ func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics, userI
 	if err != nil {
 		return err
 	}
-	defer rows.Close()
+	defer r.Close()
 
 	var peakDay string
 	var peakCount int64
-	for rows.Next() {
+	for r.Next() {
 		var day string
 		var count int64
-		if err := rows.Scan(&day, &count); err != nil {
+		if err := r.Scan(&day, &count); err != nil {
 			return err
 		}
 		stats.TasksByDayOfWeek[day] = count
@@ -367,7 +641,7 @@ func (s *StatisticsService) computeWorkloadStats(stats *models.Statistics, userI
 		}
 	}
 	stats.PeakDay = peakDay
-	return rows.Err()
+	return nil
 }
 
 func (s *StatisticsService) computeUserStats(stats *models.Statistics) error {

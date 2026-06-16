@@ -129,33 +129,113 @@ func (s *TaskService) GetTaskByID(id int64, userID int64) (*models.Task, error) 
 	return &t, nil
 }
 
-// UpdateTask applies the mutable fields of task to the row with id that belongs
-// to userID. Returns a wrapped sql.ErrNoRows when the task is not found.
-func (s *TaskService) UpdateTask(id int64, userID int64, task *models.Task) error {
-	task.UpdatedAt = time.Now()
+// UpdateTask applies the non-nil fields of patch to the row with id that
+// belongs to userID. A wrapped sql.ErrNoRows is returned when the task is
+// not found; a wrapped ErrEmptyUpdate is returned when patch has no fields
+// set.
+func (s *TaskService) UpdateTask(id int64, userID int64, patch *models.TaskUpdate) error {
+	if patch == nil || !patch.HasAny() {
+		return fmt.Errorf("UpdateTask: no fields to update: %w", ErrEmptyUpdate)
+	}
 
-	res, err := s.db.Exec(
-		`UPDATE tasks
-		 SET title            = ?,
-		     description      = ?,
-		     status           = ?,
-		     priority         = ?,
-		     duration_minutes = ?,
-		     start_date       = ?,
-		     end_date         = ?,
-		     complexity       = ?,
-		     urgency          = ?,
-		     importance       = ?,
-		     estimated_minutes= ?,
-		     updated_at       = ?
-		 WHERE id = ? AND user_id = ?`,
-		task.Title, task.Description,
-		task.Status, task.Priority, task.DurationMinutes,
-		task.StartDate, task.EndDate,
-		task.Complexity, task.Urgency, task.Importance, task.EstimatedMinutes,
-		task.UpdatedAt,
-		id, userID,
+	// If the deadline is being moved, we need its current value to decide
+	// whether moved_deadline should flip on (in addition to fetching the
+	// existing estimation inputs when those weren't sent).
+	var (
+		curEndDate    time.Time
+		curComplexity int
+		curUrgency    int
+		curImportance int
 	)
+	err := s.db.QueryRow(
+		`SELECT end_date, complexity, urgency, importance
+		 FROM tasks
+		 WHERE id = ? AND user_id = ?`,
+		id, userID,
+	).Scan(&curEndDate, &curComplexity, &curUrgency, &curImportance)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return fmt.Errorf("UpdateTask: task %d not found: %w", id, sql.ErrNoRows)
+		}
+		return fmt.Errorf("UpdateTask: scan current: %w", err)
+	}
+
+	now := time.Now()
+
+	// Build the dynamic UPDATE: only the columns explicitly set on the
+	// patch are written. updated_at is always refreshed. moved_deadline is
+	// set when the caller actually supplied a new end_date that differs
+	// from the stored one.
+	sets := []string{"updated_at = ?"}
+	args := []any{now}
+
+	if patch.Title != nil {
+		sets = append(sets, "title = ?")
+		args = append(args, *patch.Title)
+	}
+	if patch.Description != nil {
+		sets = append(sets, "description = ?")
+		args = append(args, *patch.Description)
+	}
+	if patch.Status != nil {
+		sets = append(sets, "status = ?")
+		args = append(args, *patch.Status)
+	}
+	if patch.Priority != nil {
+		sets = append(sets, "priority = ?")
+		args = append(args, *patch.Priority)
+	}
+	if patch.DurationMinutes != nil {
+		sets = append(sets, "duration_minutes = ?")
+		args = append(args, *patch.DurationMinutes)
+	}
+	if patch.StartDate != nil {
+		sets = append(sets, "start_date = ?")
+		args = append(args, *patch.StartDate)
+	}
+	if patch.EndDate != nil {
+		sets = append(sets, "end_date = ?")
+		args = append(args, *patch.EndDate)
+		moved := !patch.EndDate.Equal(curEndDate)
+		sets = append(sets, "moved_deadline = ?")
+		args = append(args, moved)
+	}
+	if patch.EstimatedMinutes != nil {
+		sets = append(sets, "estimated_minutes = ?")
+		args = append(args, *patch.EstimatedMinutes)
+	}
+
+	// If the estimation inputs change but the caller didn't pass an
+	// explicit estimated_minutes, derive it server-side from the resulting
+	// (patched || existing) values to keep the column consistent.
+	if patch.EstimatedMinutes == nil && patch.AffectsEstimation() {
+		complexity := curComplexity
+		urgency := curUrgency
+		importance := curImportance
+		if patch.Complexity != nil {
+			complexity = *patch.Complexity
+		}
+		if patch.Urgency != nil {
+			urgency = *patch.Urgency
+		}
+		if patch.Importance != nil {
+			importance = *patch.Importance
+		}
+		sets = append(sets, "estimated_minutes = ?")
+		args = append(args, models.CalculateEstimatedTime(complexity, urgency, importance))
+	}
+
+	query := "UPDATE tasks SET "
+	for i, col := range sets {
+		if i > 0 {
+			query += ", "
+		}
+		query += col
+	}
+	query += " WHERE id = ? AND user_id = ?"
+	args = append(args, id, userID)
+
+	res, err := s.db.Exec(query, args...)
 	if err != nil {
 		return fmt.Errorf("UpdateTask: exec: %w", err)
 	}
@@ -190,6 +270,10 @@ func (s *TaskService) DeleteTask(id int64, userID int64) error {
 	}
 	return nil
 }
+
+// ErrEmptyUpdate is returned by UpdateTask when the supplied patch contains
+// no fields to apply.
+var ErrEmptyUpdate = errors.New("empty update")
 
 // scanTasks reads all rows from a task query result into a slice.
 func scanTasks(rows *sql.Rows) ([]models.Task, error) {

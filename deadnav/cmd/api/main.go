@@ -14,7 +14,9 @@ import (
 	"deadnav/internal/config"
 	"deadnav/internal/database"
 	"deadnav/internal/handlers"
+	vkidhandler "deadnav/internal/handlers/vkid"
 	"deadnav/internal/services"
+	vkidservice "deadnav/internal/services/vkid"
 	"deadnav/pkg/logger"
 	"deadnav/pkg/middleware"
 
@@ -42,11 +44,11 @@ func main() {
 		if err == nil {
 			break
 		}
-		log.Warn(fmt.Sprintf("database not ready (attempt %d/30): %v", attempt, err))
+		log.Warn(fmt.Sprintf("database not ready (attempt %d/10): %v", attempt, err))
 		time.Sleep(2 * time.Second)
 	}
 	if err != nil {
-		log.Fatal(fmt.Sprintf("failed to connect to database after 30 attempts: %v", err))
+		log.Fatal(fmt.Sprintf("failed to connect to database after 10 attempts: %v", err))
 	}
 	defer db.Close()
 	log.Info("database connection established")
@@ -57,6 +59,11 @@ func main() {
 	scheduleService := services.NewScheduleService(db)
 	statsService := services.NewStatisticsService(db)
 	preferencesService := services.NewPreferencesService(db)
+	vkIDService := vkidservice.NewVKIDService(
+		cfg.VKID.ClientID,
+		cfg.VKID.ClientSecret,
+		cfg.VKID.RedirectURL,
+	)
 
 	// ── Handlers ──────────────────────────────────────────────────────────────
 	authHandler := handlers.NewAuthHandler(userService)
@@ -64,6 +71,7 @@ func main() {
 	scheduleHandler := handlers.NewScheduleHandler(scheduleService, taskService)
 	statsHandler := handlers.NewStatisticsHandler(statsService)
 	preferencesHandler := handlers.NewPreferencesHandler(preferencesService)
+	vkIDHandler := vkidhandler.NewVKIDHandler(vkIDService, userService)
 
 	// ── Router ────────────────────────────────────────────────────────────────
 	r := gin.New()
@@ -81,12 +89,25 @@ func main() {
 	})
 
 	// ── Auth routes (public) ──────────────────────────────────────────────────
+	authLimiter, err := middleware.NewRateLimiter(cfg.RateLimit.Rate)
+	if err != nil {
+		log.Fatal(fmt.Sprintf("invalid AUTH_RATE_LIMIT %q: %v", cfg.RateLimit.Rate, err))
+	}
+	if authLimiter == nil {
+		log.Info("auth rate limiting is disabled (AUTH_RATE_LIMIT is empty)")
+	}
+
 	auth := r.Group("/api/v1/auth")
+	if authLimiter != nil {
+		auth.Use(authLimiter)
+	}
 	{
-		auth.POST("/register", authHandler.Register)
-		auth.POST("/login", authHandler.Login)
-		auth.POST("/telegram", authHandler.LoginWithTelegram)
-		auth.GET("/me", middleware.JWTAuth(userService), authHandler.GetMe)
+		auth.POST("/register", authHandler.Register)                        // tested in postman
+		auth.POST("/login", authHandler.Login)                              // tested in postman
+		auth.POST("/telegram", authHandler.LoginWithTelegram)               // tested in postman
+		auth.POST("/vk", vkIDHandler.Login)                                 // VK Mini App login
+		auth.GET("/me", middleware.JWTAuth(userService), authHandler.GetMe) // tested in postman
+		auth.PUT("/notification", middleware.JWTAuth(userService), authHandler.ToggleNotification)
 	}
 
 	// ── Protected routes ──────────────────────────────────────────────────────
@@ -96,11 +117,11 @@ func main() {
 		// Tasks
 		tasks := protected.Group("/tasks")
 		{
-			tasks.POST("", taskHandler.CreateTask)
-			tasks.GET("", taskHandler.GetAllTasks)
-			tasks.GET("/:id", taskHandler.GetTask)
-			tasks.PUT("/:id", taskHandler.UpdateTask)
-			tasks.DELETE("/:id", taskHandler.DeleteTask)
+			tasks.POST("", taskHandler.CreateTask)       // tested in postman
+			tasks.GET("", taskHandler.GetAllTasks)       // tested in postman
+			tasks.GET("/:id", taskHandler.GetTask)       // tested in postman
+			tasks.PUT("/:id", taskHandler.UpdateTask)    // tested in postman
+			tasks.DELETE("/:id", taskHandler.DeleteTask) // tested in postman
 		}
 
 		// Calendar / schedule
@@ -114,7 +135,10 @@ func main() {
 		}
 
 		// Statistics
-		protected.GET("/statistics", statsHandler.GetStatistics)
+		protected.GET("/statistics", statsHandler.GetStatistics) // tested in postman
+		protected.POST("/statistics", statsHandler.CreateStatistics)
+		protected.PUT("/statistics", statsHandler.UpdateStatistics)
+		protected.DELETE("/statistics", statsHandler.DeleteStatistics)
 
 		// User preferences
 		prefs := protected.Group("/preferences")

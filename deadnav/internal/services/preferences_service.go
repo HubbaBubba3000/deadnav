@@ -98,32 +98,32 @@ var validWorkDayAbbrevs = map[string]struct{}{
 
 func validatePreferences(p *models.UserPreferences) error {
 	if p.WorkStartHour < 0 || p.WorkStartHour > 23 {
-		return errors.New("work_start_hour must be 0–23")
+		return errors.New("work_start_hour должен находиться в диапазоне от 0 до 23")
 	}
-	if p.WorkEndHour < 1 || p.WorkEndHour > 24 {
-		return errors.New("work_end_hour must be 1–24")
+	if p.WorkEndHour < 0 || p.WorkEndHour > 23 {
+		return errors.New("work_end_hour должен находиться в диапазоне от 0 до 23")
 	}
 	if p.WorkStartHour >= p.WorkEndHour {
-		return errors.New("work_start_hour must be less than work_end_hour")
+		return errors.New("work_start_hour должен быть меньше work_end_hour")
 	}
 	if p.MinSlotMinutes < 5 || p.MinSlotMinutes > 480 {
-		return errors.New("min_slot_minutes must be 5–480")
+		return errors.New("min_slot_minutes должен быть в диапазоне от 5 до 480")
 	}
 
 	parts := strings.Split(p.WorkDays, ",")
 	if len(parts) == 0 {
-		return errors.New("work_days must not be empty")
+		return errors.New("work_days не должен быть пустым")
 	}
 	for _, part := range parts {
 		part = strings.TrimSpace(part)
 		if _, ok := validWorkDayAbbrevs[part]; !ok {
-			return fmt.Errorf("unknown work day abbreviation: %q", part)
+			return fmt.Errorf("неизвестное сокращение дня недели: %q", part)
 		}
 	}
 
 	if p.Timezone != "" {
 		if _, err := time.LoadLocation(p.Timezone); err != nil {
-			return fmt.Errorf("invalid timezone %q: %w", p.Timezone, err)
+			return fmt.Errorf("недопустимый часовой пояс %q: %w", p.Timezone, err)
 		}
 	}
 	return nil

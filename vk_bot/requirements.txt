@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+vk_api
+pymysql

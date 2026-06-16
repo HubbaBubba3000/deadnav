@@ -27,6 +27,34 @@ func NewScheduleHandler(scheduleService *services.ScheduleService, taskService *
 	}
 }
 
+// parseScheduleFilter extracts ScheduleFilter from query parameters.
+func parseScheduleFilter(c *gin.Context, userID int64) (models.ScheduleFilter, error) {
+	filter := models.ScheduleFilter{UserID: userID}
+
+	if from := c.Query("from"); from != "" {
+		t, err := time.Parse(time.RFC3339, from)
+		if err != nil {
+			return models.ScheduleFilter{}, err
+		}
+		filter.From = t
+	}
+	if to := c.Query("to"); to != "" {
+		t, err := time.Parse(time.RFC3339, to)
+		if err != nil {
+			return models.ScheduleFilter{}, err
+		}
+		filter.To = t
+	}
+	if status := c.Query("status"); status != "" {
+		filter.Status = status
+	}
+	if order := c.Query("order"); order != "" {
+		filter.Order = order
+	}
+
+	return filter, nil
+}
+
 // GetSchedule godoc
 // @Summary Get user schedule
 // @Description Return all scheduled time blocks for the authenticated user.
@@ -82,7 +110,7 @@ func (h *ScheduleHandler) GetTaskSchedule(c *gin.Context) {
 	schedule, err := h.scheduleService.GetTaskSchedule(id, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "no schedule found for this task"})
+			c.JSON(http.StatusNotFound, errorResponse{Error: "расписание для этой задачи не найдено"})
 			return
 		}
 		internalError(c, "GetTaskSchedule: fetch", err)
@@ -99,9 +127,10 @@ func (h *ScheduleHandler) GetTaskSchedule(c *gin.Context) {
 // @Produce json
 // @Security BearerAuth
 // @Param   id path int true "Task ID"
-// @Success 200 {object} models.Schedule
+// @Success 200 {object} rescheduleTaskResponse
 // @Failure 400 {object} errorResponse
 // @Failure 404 {object} errorResponse
+// @Failure 422 {object} rescheduleTaskResponse
 // @Router /api/v1/schedule/task/{id}/reschedule [post]
 func (h *ScheduleHandler) RescheduleTask(c *gin.Context) {
 	userID := mustUserID(c)
@@ -114,20 +143,24 @@ func (h *ScheduleHandler) RescheduleTask(c *gin.Context) {
 	task, err := h.taskService.GetTaskByID(id, userID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			c.JSON(http.StatusNotFound, errorResponse{Error: "task not found"})
+			c.JSON(http.StatusNotFound, errorResponse{Error: "задача не найдена"})
 			return
 		}
 		internalError(c, "RescheduleTask: fetch", err)
 		return
 	}
 
-	schedule, err := h.scheduleService.AutoScheduleTask(task, userID)
+	schedule, err := h.scheduleService.RescheduleTaskWithCascade(task, userID)
+	scheduleWarning := buildScheduleWarning(err, userID, h.taskService)
 	if err != nil {
-		c.JSON(http.StatusUnprocessableEntity, errorResponse{Error: err.Error()})
+		c.JSON(http.StatusUnprocessableEntity, rescheduleTaskResponse{ScheduleWarning: scheduleWarning})
 		return
 	}
 
-	c.JSON(http.StatusOK, schedule)
+	c.JSON(http.StatusOK, rescheduleTaskResponse{
+		Schedule:        schedule,
+		ScheduleWarning: scheduleWarning,
+	})
 }
 
 // UnscheduleTask godoc
@@ -153,7 +186,7 @@ func (h *ScheduleHandler) UnscheduleTask(c *gin.Context) {
 		return
 	}
 
-	c.JSON(http.StatusOK, messageResponse{Message: "schedule entry removed"})
+	c.JSON(http.StatusOK, messageResponse{Message: "расписание удалено успешно"})
 }
 
 // GetFreeSlots godoc
@@ -169,6 +202,11 @@ func (h *ScheduleHandler) UnscheduleTask(c *gin.Context) {
 // @Success 200 {array}  models.ScheduleSlot
 // @Failure 400 {object} errorResponse
 // @Router /api/v1/schedule/free-slots [get]
+type rescheduleTaskResponse struct {
+	Schedule        *models.Schedule `json:"schedule,omitempty"`
+	ScheduleWarning *scheduleWarning `json:"schedule_warning,omitempty"`
+}
+
 func (h *ScheduleHandler) GetFreeSlots(c *gin.Context) {
 	userID := mustUserID(c)
 
@@ -177,23 +215,23 @@ func (h *ScheduleHandler) GetFreeSlots(c *gin.Context) {
 	durationStr := c.DefaultQuery("duration", "60")
 
 	if fromStr == "" || toStr == "" {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "query params 'from' and 'to' are required (RFC3339 format)"})
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "параметры 'from' и 'to' обязательны (формат RFC3339)"})
 		return
 	}
 
 	from, err := time.Parse(time.RFC3339, fromStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid 'from' date: " + err.Error()})
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "неверная дата 'from': " + err.Error()})
 		return
 	}
 	to, err := time.Parse(time.RFC3339, toStr)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "invalid 'to' date: " + err.Error()})
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "неверная дата 'to': " + err.Error()})
 		return
 	}
 	duration, err := strconv.Atoi(durationStr)
 	if err != nil || duration < 1 {
-		c.JSON(http.StatusBadRequest, errorResponse{Error: "'duration' must be a positive integer (minutes)"})
+		c.JSON(http.StatusBadRequest, errorResponse{Error: "'duration' должен быть положительным целым числом (минуты)"})
 		return
 	}
 

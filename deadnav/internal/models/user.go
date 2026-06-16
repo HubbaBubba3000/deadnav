@@ -9,7 +9,9 @@ type User struct {
 	Email        string    `json:"email"`
 	PasswordHash string    `json:"-"`
 	TelegramID   *int64    `json:"telegram_id,omitempty"`
-	AuthProvider string    `json:"auth_provider"` // "local" | "telegram"
+	VKID         *int64    `json:"vk_id,omitempty"`
+	AuthProvider string    `json:"auth_provider"` // "local" | "telegram" | "vk"
+	Notification bool      `json:notification`
 	CreatedAt    time.Time `json:"created_at"`
 }
 

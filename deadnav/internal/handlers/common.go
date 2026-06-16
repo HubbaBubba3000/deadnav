@@ -11,7 +11,7 @@ import (
 	"go.uber.org/zap"
 )
 
-// errorResponse is the canonical error envelope returned by all handlers.
+// errorResponse — стандартный формат ответа с ошибкой, используемый всеми обработчиками.
 type errorResponse struct {
 	Error string `json:"error"`
 }

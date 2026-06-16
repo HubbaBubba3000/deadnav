@@ -19,7 +19,7 @@ func NewAuthHandler(userService *services.UserService) *AuthHandler {
 
 // Register handles user registration
 // @Summary Register a new user
-// @Description Register a new user with username, email and password
+// @Description Register a new user with username, optional email, and password
 // @Tags auth
 // @Accept json
 // @Produce json
@@ -30,7 +30,7 @@ func NewAuthHandler(userService *services.UserService) *AuthHandler {
 func (h *AuthHandler) Register(c *gin.Context) {
 	var req services.RegisterRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "недопустимый формат запроса"})
 		return
 	}
 
@@ -55,8 +55,9 @@ func (h *AuthHandler) Register(c *gin.Context) {
 // @Router /api/v1/auth/login [post]
 func (h *AuthHandler) Login(c *gin.Context) {
 	var req services.LoginRequest
+
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "недопустимый формат запроса"})
 		return
 	}
 
@@ -82,7 +83,7 @@ func (h *AuthHandler) Login(c *gin.Context) {
 func (h *AuthHandler) LoginWithTelegram(c *gin.Context) {
 	var req services.TelegramAuthRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		c.JSON(http.StatusBadRequest, gin.H{"error": "недопустимый формат запроса"})
 		return
 	}
 
@@ -106,7 +107,7 @@ func (h *AuthHandler) LoginWithTelegram(c *gin.Context) {
 func (h *AuthHandler) GetMe(c *gin.Context) {
 	userID, exists := c.Get("user_id")
 	if !exists {
-		c.JSON(http.StatusUnauthorized, gin.H{"error": "unauthorized"})
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "необходима авторизация"})
 		return
 	}
 
@@ -116,5 +117,32 @@ func (h *AuthHandler) GetMe(c *gin.Context) {
 		return
 	}
 
+	c.JSON(http.StatusOK, user)
+}
+
+type Notification struct {
+	Enable bool `json:"notification"`
+}
+
+func (h *AuthHandler) ToggleNotification(c *gin.Context) {
+	userID := mustUserID(c)
+
+	user, err := h.UserService.GetUserByID(userID)
+	if err != nil {
+		internalError(c, "togglenotification: fetch", err)
+		return
+	}
+
+	var req Notification
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "togglenotification: invalid body"})
+		return
+	}
+
+	if err := h.UserService.UpdateNotification(int64(userID), req.Enable); err != nil {
+		internalError(c, "togglenotification: update", err)
+		return
+	}
+	user.Notification = req.Enable
 	c.JSON(http.StatusOK, user)
 }

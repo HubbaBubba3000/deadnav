@@ -9,6 +9,9 @@ import (
 	"time"
 
 	"deadnav/internal/models"
+	"deadnav/pkg/logger"
+
+	"go.uber.org/zap"
 )
 
 // Scheduling constants.
@@ -25,12 +28,16 @@ const (
 
 // ScheduleService handles all scheduling operations.
 type ScheduleService struct {
-	db *sql.DB
+	db  *sql.DB
+	log *zap.Logger
 }
 
 // NewScheduleService creates a ScheduleService backed by the provided database connection.
 func NewScheduleService(db *sql.DB) *ScheduleService {
-	return &ScheduleService{db: db}
+	return &ScheduleService{
+		db:  db,
+		log: logger.GetLogger(),
+	}
 }
 
 // ---------------------------------------------------------------------------
@@ -48,45 +55,18 @@ func NewScheduleService(db *sql.DB) *ScheduleService {
 func (s *ScheduleService) AutoScheduleTask(task *models.Task, userID int64) (*models.Schedule, error) {
 	ctx := context.Background()
 
+	if err := validateSchedulingWindow(task); err != nil {
+		return nil, fmt.Errorf("AutoScheduleTask: %w", err)
+	}
+
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
 	if err != nil {
 		return nil, fmt.Errorf("AutoScheduleTask: begin tx: %w", err)
 	}
 	defer tx.Rollback() // no-op after Commit
 
-	prefs, err := s.getUserPreferencesTx(tx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("AutoScheduleTask: load preferences: %w", err)
-	}
-
-	duration := calculateDuration(task)
-
-	// Collect schedules that could conflict (now → deadline) within the
-	// transaction so we hold a consistent view of existing bookings.
-	now := time.Now()
-	existing, err := s.getUserScheduleRangeTx(tx, userID, now, task.EndDate)
-	if err != nil {
-		return nil, fmt.Errorf("AutoScheduleTask: fetch existing schedules: %w", err)
-	}
-
-	slot, err := findFreeSlot(task, prefs, existing, duration)
-	if err != nil {
+	if err := s.autoScheduleTaskTx(tx, task, userID); err != nil {
 		return nil, fmt.Errorf("AutoScheduleTask: %w", err)
-	}
-
-	// Upsert within the transaction: ON DUPLICATE KEY prevents two rows for
-	// the same task, and SERIALIZABLE ensures no other session can insert a
-	// conflicting time window between our SELECT and INSERT.
-	_, err = tx.Exec(
-		`INSERT INTO schedules (task_id, user_id, start_time, end_time)
-		 VALUES (?, ?, ?, ?)
-		 ON DUPLICATE KEY UPDATE
-		     start_time = VALUES(start_time),
-		     end_time   = VALUES(end_time)`,
-		task.ID, userID, slot.StartTime.UTC(), slot.EndTime.UTC(),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("AutoScheduleTask: upsert schedule: %w", err)
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -101,6 +81,218 @@ func (s *ScheduleService) AutoScheduleTask(task *models.Task, userID int64) (*mo
 	return sc, nil
 }
 
+// RescheduleTaskWithCascade tries to place the requested task into schedule by
+// moving conflicting tasks one-by-one to their next available slots.
+func (s *ScheduleService) RescheduleTaskWithCascade(task *models.Task, userID int64) (*models.Schedule, error) {
+	ctx := context.Background()
+
+	if err := validateSchedulingWindow(task); err != nil {
+		return nil, fmt.Errorf("RescheduleTaskWithCascade: %w", err)
+	}
+
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable})
+	if err != nil {
+		return nil, fmt.Errorf("RescheduleTaskWithCascade: begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	if err := s.rescheduleTaskWithCascadeTx(tx, task, userID); err != nil {
+		return nil, fmt.Errorf("RescheduleTaskWithCascade: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("RescheduleTaskWithCascade: commit: %w", err)
+	}
+
+	sc, err := s.GetTaskSchedule(task.ID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("RescheduleTaskWithCascade: fetch saved schedule: %w", err)
+	}
+	return sc, nil
+}
+
+func (s *ScheduleService) autoScheduleTaskTx(tx *sql.Tx, task *models.Task, userID int64) error {
+	prefs, err := s.getUserPreferencesTx(tx, userID)
+	if err != nil {
+		return fmt.Errorf("load preferences: %w", err)
+	}
+
+	duration := calculateDuration(task)
+	now := time.Now()
+	existing, err := s.getUserScheduleRangeTx(tx, userID, now, task.EndDate)
+	if err != nil {
+		return fmt.Errorf("fetch existing schedules: %w", err)
+	}
+	existing = excludeTaskSchedule(existing, task.ID)
+
+	slot, blockedTaskIDs, err := findFreeSlot(task, prefs, existing, duration)
+	if err != nil {
+		return withBlockedTaskIDs(err, blockedTaskIDs)
+	}
+
+	if err := s.upsertScheduleTx(tx, task, userID, slot); err != nil {
+		return err
+	}
+	return nil
+}
+
+// maxCascadeDepth limits how many levels of cascaded rescheduling are
+// attempted. This prevents runaway work when the blocked-task graph is deep
+// or cyclic.
+const maxCascadeDepth = 10
+
+func (s *ScheduleService) rescheduleTaskWithCascadeTx(tx *sql.Tx, task *models.Task, userID int64) error {
+	// visitedIDs tracks every task ID that has already been processed during
+	// this cascade pass. It serves two purposes:
+	//   1. Cycle guard — if task A was displaced by moving task B, and moving
+	//      B would displace A again, we skip A the second time instead of
+	//      looping forever.
+	//   2. Duplicate work guard — blockedTaskIDs from findFreeSlot may contain
+	//      the same ID more than once across iterations.
+	visitedIDs := map[int64]struct{}{task.ID: {}}
+	return s.rescheduleWithCascadeInternal(tx, task, userID, visitedIDs, 0)
+}
+
+func (s *ScheduleService) rescheduleWithCascadeInternal(
+	tx *sql.Tx,
+	task *models.Task,
+	userID int64,
+	visitedIDs map[int64]struct{},
+	depth int,
+) error {
+	if depth > maxCascadeDepth {
+		return fmt.Errorf("превышена максимальная глубина каскадного перепланирования (%d уровней)", maxCascadeDepth)
+	}
+
+	prefs, err := s.getUserPreferencesTx(tx, userID)
+	if err != nil {
+		return fmt.Errorf("load preferences: %w", err)
+	}
+
+	duration := calculateDuration(task)
+	now := time.Now()
+	existing, err := s.getUserScheduleRangeTx(tx, userID, now, task.EndDate)
+	if err != nil {
+		return fmt.Errorf("fetch existing schedules: %w", err)
+	}
+	existing = excludeTaskSchedule(existing, task.ID)
+
+	slot, blockedTaskIDs, err := findFreeSlot(task, prefs, existing, duration)
+	if err == nil {
+		return s.upsertScheduleTx(tx, task, userID, slot)
+	}
+	if len(blockedTaskIDs) == 0 {
+		// No blocking tasks identified — nothing to cascade, surface the error.
+		return withBlockedTaskIDs(err, blockedTaskIDs)
+	}
+
+	blockedTasks, err := s.getTasksByIDsTx(tx, userID, blockedTaskIDs)
+	if err != nil {
+		return fmt.Errorf("load blocked tasks: %w", err)
+	}
+
+	// Track IDs that we could not move so we can report them to the caller.
+	var unresolvedIDs []int64
+
+	for _, blockedTask := range blockedTasks {
+		// Skip terminal states — completed/cancelled tasks cannot be moved.
+		if blockedTask.Status == "completed" || blockedTask.Status == "cancelled" {
+			continue
+		}
+
+		// Cycle / duplicate guard: skip tasks we have already processed in
+		// this cascade chain (including the root task itself).
+		if _, seen := visitedIDs[blockedTask.ID]; seen {
+			unresolvedIDs = append(unresolvedIDs, blockedTask.ID)
+			continue
+		}
+		visitedIDs[blockedTask.ID] = struct{}{}
+
+		// Attempt to recursively reschedule the blocker. On failure we record
+		// it as unresolved and continue with the remaining blockers instead of
+		// aborting immediately — moving other blockers may still free enough
+		// space for the root task.
+		if err := s.rescheduleWithCascadeInternal(tx, blockedTask, userID, visitedIDs, depth+1); err != nil {
+			unresolvedIDs = append(unresolvedIDs, blockedTask.ID)
+		}
+	}
+
+	// Re-read the schedule after all cascade moves and try to place the root
+	// task. Even a partial cascade (some blockers moved, some not) may have
+	// freed a valid slot.
+	existing, err = s.getUserScheduleRangeTx(tx, userID, now, task.EndDate)
+	if err != nil {
+		return fmt.Errorf("reload schedules after cascade: %w", err)
+	}
+	existing = excludeTaskSchedule(existing, task.ID)
+
+	slot, remainingBlockedIDs, err := findFreeSlot(task, prefs, existing, duration)
+	if err != nil {
+		// Merge unresolved IDs from both sources so the caller gets a
+		// complete picture of what is still blocking the root task.
+		allBlocked := mergeIDs(unresolvedIDs, remainingBlockedIDs)
+		return withBlockedTaskIDs(err, allBlocked)
+	}
+
+	return s.upsertScheduleTx(tx, task, userID, slot)
+}
+
+// mergeIDs returns a deduplicated union of two int64 slices.
+func mergeIDs(a, b []int64) []int64 {
+	seen := make(map[int64]struct{}, len(a)+len(b))
+	result := make([]int64, 0, len(a)+len(b))
+	for _, id := range append(a, b...) {
+		if _, ok := seen[id]; !ok {
+			seen[id] = struct{}{}
+			result = append(result, id)
+		}
+	}
+	return result
+}
+
+func (s *ScheduleService) upsertScheduleTx(tx *sql.Tx, task *models.Task, userID int64, slot *models.ScheduleSlot) error {
+	_, err := tx.Exec(
+		`INSERT INTO schedules (task_id, title, status, user_id, start_time, end_time)
+		 VALUES (?, ?, ?, ?, ?, ?)
+		 ON DUPLICATE KEY UPDATE
+		     start_time = VALUES(start_time),
+		     end_time   = VALUES(end_time)`,
+		task.ID, task.Title, task.Status, userID, slot.StartTime.UTC(), slot.EndTime.UTC(),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert schedule: %w", err)
+	}
+	return nil
+}
+
+func (s *ScheduleService) getTasksByIDsTx(q dbQuerier, userID int64, taskIDs []int64) ([]*models.Task, error) {
+	var tasks []*models.Task
+	for _, id := range taskIDs {
+		var t models.Task
+		err := q.QueryRow(
+			`SELECT id, user_id, title, description, status, priority, duration_minutes,
+			        start_date, end_date, complexity, urgency, importance, estimated_minutes,
+			        created_at, updated_at
+			 FROM tasks
+			 WHERE id = ? AND user_id = ?`,
+			id, userID,
+		).Scan(
+			&t.ID, &t.UserID, &t.Title, &t.Description,
+			&t.Status, &t.Priority, &t.DurationMinutes,
+			&t.StartDate, &t.EndDate, &t.Complexity, &t.Urgency, &t.Importance, &t.EstimatedMinutes,
+			&t.CreatedAt, &t.UpdatedAt,
+		)
+		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				continue
+			}
+			return nil, fmt.Errorf("getTasksByIDsTx: task %d: %w", id, err)
+		}
+		tasks = append(tasks, &t)
+	}
+	return tasks, nil
+}
+
 // RemoveSchedule deletes the schedule entry for the given task and user.
 func (s *ScheduleService) RemoveSchedule(taskID int64, userID int64) error {
 	_, err := s.db.Exec(
@@ -108,6 +300,9 @@ func (s *ScheduleService) RemoveSchedule(taskID int64, userID int64) error {
 		taskID, userID,
 	)
 	if err != nil {
+		s.log.Error("RemoveSchedule",
+			zap.Error(err),
+		)
 		return fmt.Errorf("RemoveSchedule: %w", err)
 	}
 	return nil
@@ -120,7 +315,7 @@ func (s *ScheduleService) GetUserSchedule(userID int64) ([]models.Schedule, erro
 
 // GetSchedules returns schedules matching the given filter, ordered by start time.
 func (s *ScheduleService) GetSchedules(filter models.ScheduleFilter) ([]models.Schedule, error) {
-	query := `SELECT id, task_id, user_id, start_time, end_time, created_at
+	query := `SELECT id, task_id, title, status, user_id, start_time, end_time, created_at
 	 FROM schedules
 	 WHERE user_id = ?`
 	args := []any{filter.UserID}
@@ -133,17 +328,30 @@ func (s *ScheduleService) GetSchedules(filter models.ScheduleFilter) ([]models.S
 		query += " AND end_time <= ?"
 		args = append(args, filter.To)
 	}
-
-	query += " ORDER BY start_time"
+	if filter.Status != "" {
+		query += " AND status = ?"
+		args = append(args, filter.Status)
+	}
+	if filter.Order != "" {
+		query += " ORDER BY " + filter.Order
+	} else {
+		query += " ORDER BY start_time"
+	}
 
 	rows, err := s.db.Query(query, args...)
 	if err != nil {
+		s.log.Error("GetSchedule: query",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("GetSchedules: query: %w", err)
 	}
 	defer rows.Close()
 
 	schedules, err := scanSchedules(rows)
 	if err != nil {
+		s.log.Error("GetSchedule",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("GetSchedules: %w", err)
 	}
 	return schedules, nil
@@ -155,7 +363,7 @@ func (s *ScheduleService) GetSchedules(filter models.ScheduleFilter) ([]models.S
 // Overlap condition: start_time < to AND end_time > from.
 func (s *ScheduleService) GetUserScheduleRange(userID int64, from, to time.Time) ([]models.Schedule, error) {
 	rows, err := s.db.Query(
-		`SELECT id, task_id, user_id, start_time, end_time, created_at
+		`SELECT id, task_id, title, status, user_id, start_time, end_time, created_at
 		 FROM schedules
 		 WHERE user_id = ?
 		   AND start_time < ?
@@ -164,12 +372,18 @@ func (s *ScheduleService) GetUserScheduleRange(userID int64, from, to time.Time)
 		userID, to, from,
 	)
 	if err != nil {
+		s.log.Error("GetUserScheduleRange: query:",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("GetUserScheduleRange: query: %w", err)
 	}
 	defer rows.Close()
 
 	schedules, err := scanSchedules(rows)
 	if err != nil {
+		s.log.Error("GetUserScheduleRange:",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("GetUserScheduleRange: %w", err)
 	}
 	return schedules, nil
@@ -180,15 +394,18 @@ func (s *ScheduleService) GetUserScheduleRange(userID int64, from, to time.Time)
 func (s *ScheduleService) GetTaskSchedule(taskID int64, userID int64) (*models.Schedule, error) {
 	var sc models.Schedule
 	err := s.db.QueryRow(
-		`SELECT id, task_id, user_id, start_time, end_time, created_at
+		`SELECT id, task_id, title, status, user_id, start_time, end_time, created_at
 		 FROM schedules
 		 WHERE task_id = ? AND user_id = ?`,
 		taskID, userID,
-	).Scan(&sc.ID, &sc.TaskID, &sc.UserID, &sc.StartTime, &sc.EndTime, &sc.CreatedAt)
+	).Scan(&sc.ID, &sc.TaskID, &sc.Title, &sc.Status, &sc.UserID, &sc.StartTime, &sc.EndTime, &sc.CreatedAt)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("GetTaskSchedule: no schedule for task %d: %w", taskID, sql.ErrNoRows)
 		}
+		s.log.Error("GetTaskSchedule: scan:",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("GetTaskSchedule: scan: %w", err)
 	}
 	return &sc, nil
@@ -294,6 +511,9 @@ func (s *ScheduleService) getUserPreferencesTx(q dbQuerier, userID int64) (*mode
 			// No preferences row — defaults are already populated.
 			return prefs, nil
 		}
+		s.log.Error("getUserPreferences: scan",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("getUserPreferences: scan: %w", err)
 	}
 	return prefs, nil
@@ -310,21 +530,28 @@ type dbQuerier interface {
 // overlaps [from, to) using the given querier (db or tx).
 func (s *ScheduleService) getUserScheduleRangeTx(q dbQuerier, userID int64, from, to time.Time) ([]models.Schedule, error) {
 	rows, err := q.Query(
-		`SELECT id, task_id, user_id, start_time, end_time, created_at
+		`SELECT id, task_id, title, status, user_id, start_time, end_time, created_at
 		 FROM schedules
 		 WHERE user_id = ?
 		   AND start_time < ?
 		   AND end_time   > ?
+		   AND status NOT IN ('completed', 'cancelled')
 		 ORDER BY start_time`,
 		userID, to, from,
 	)
 	if err != nil {
+		s.log.Error("getUserScheduleRangeTx: query",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("getUserScheduleRangeTx: query: %w", err)
 	}
 	defer rows.Close()
 
 	schedules, err := scanSchedules(rows)
 	if err != nil {
+		s.log.Error("getUserScheduleRangeTx",
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("getUserScheduleRangeTx: %w", err)
 	}
 	return schedules, nil
@@ -337,6 +564,9 @@ func (s *ScheduleService) getUserScheduleRangeTx(q dbQuerier, userID int64, from
 // findFreeSlot iterates through working days between max(now, task.StartDate)
 // and task.EndDate and returns the first slot of the required duration that
 // does not conflict with any existing schedule.
+//
+// When no slot can be found before the deadline, it returns an error that
+// includes the IDs of tasks that are blocking the schedule.
 //
 // Algorithm per working day:
 //  1. Compute dayStart and dayEnd from user preferences.
@@ -352,7 +582,9 @@ func findFreeSlot(
 	prefs *models.UserPreferences,
 	existing []models.Schedule,
 	duration time.Duration,
-) (*models.ScheduleSlot, error) {
+) (*models.ScheduleSlot, []int64, error) {
+	// blockedTaskIDs accumulates task IDs that prevent scheduling due to conflicts
+	var blockedTaskIDs []int64
 	loc := loadLocation(prefs.Timezone)
 	workDays := parseWorkDays(prefs.WorkDays)
 
@@ -384,10 +616,22 @@ func findFreeSlot(
 
 			// Slot must not reach past the task deadline.
 			if slotEnd.After(deadline) {
-				return nil, fmt.Errorf("findFreeSlot: no available slot before deadline %s", deadline.Format(time.RFC3339))
+				return nil, blockedTaskIDs, fmt.Errorf("нет доступного слота до дедлайна %s", deadline.Format(time.RFC3339))
 			}
 
 			if overlap := findOverlap(slotStart, slotEnd, existing); overlap != nil {
+				// Check if this conflicting task is already in our blocked list
+				alreadyBlocked := false
+				for _, id := range blockedTaskIDs {
+					if id == overlap.TaskID {
+						alreadyBlocked = true
+						break
+					}
+				}
+				// If not already in the list, add it
+				if !alreadyBlocked {
+					blockedTaskIDs = append(blockedTaskIDs, overlap.TaskID)
+				}
 				// Push start to just after the conflicting schedule ends.
 				slotStart = overlap.EndTime.In(loc)
 				continue
@@ -397,14 +641,14 @@ func findFreeSlot(
 			return &models.ScheduleSlot{
 				StartTime: slotStart.UTC(),
 				EndTime:   slotEnd.UTC(),
-			}, nil
+			}, blockedTaskIDs, nil
 		}
 
 		// No slot found today; try the next calendar day.
 		current = day.AddDate(0, 0, 1)
 	}
 
-	return nil, fmt.Errorf("findFreeSlot: no available slot before deadline %s", deadline.Format(time.RFC3339))
+	return nil, blockedTaskIDs, fmt.Errorf("нет доступного слота до дедлайна %s", deadline.Format(time.RFC3339))
 }
 
 // ---------------------------------------------------------------------------
@@ -417,7 +661,7 @@ func scanSchedules(rows *sql.Rows) ([]models.Schedule, error) {
 	for rows.Next() {
 		var sc models.Schedule
 		if err := rows.Scan(
-			&sc.ID, &sc.TaskID, &sc.UserID,
+			&sc.ID, &sc.TaskID, &sc.Title, &sc.Status, &sc.UserID,
 			&sc.StartTime, &sc.EndTime, &sc.CreatedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scanSchedules: scan row: %w", err)
@@ -448,6 +692,50 @@ func calculateDuration(task *models.Task) time.Duration {
 		minutes = maxDurationMinutes
 	}
 	return time.Duration(minutes) * time.Minute
+}
+
+func validateSchedulingWindow(task *models.Task) error {
+	if task.EndDate.Before(task.StartDate) {
+		return fmt.Errorf("дедлайн не может быть раньше даты начала")
+	}
+
+	duration := calculateDuration(task)
+	if duration <= 0 {
+		return fmt.Errorf("длительность задачи должна быть больше 0")
+	}
+
+	if task.StartDate.Add(duration).After(task.EndDate) {
+		return fmt.Errorf("окно задачи меньше требуемой длительности")
+	}
+
+	return nil
+}
+
+func excludeTaskSchedule(schedules []models.Schedule, taskID int64) []models.Schedule {
+	if taskID == 0 {
+		return schedules
+	}
+
+	filtered := schedules[:0]
+	for _, sc := range schedules {
+		if sc.TaskID != taskID {
+			filtered = append(filtered, sc)
+		}
+	}
+	return filtered
+}
+
+func withBlockedTaskIDs(err error, blockedTaskIDs []int64) error {
+	if err == nil || len(blockedTaskIDs) == 0 {
+		return err
+	}
+
+	var idStrs []string
+	for _, id := range blockedTaskIDs {
+		idStrs = append(idStrs, fmt.Sprintf("%d", id))
+	}
+
+	return fmt.Errorf("%s blocked_tasks=[%s]", err.Error(), strings.Join(idStrs, ", "))
 }
 
 // findOverlap returns the first schedule in the slice whose window overlaps
